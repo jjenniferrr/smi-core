@@ -1,0 +1,1173 @@
+/* ==========================================================================
+   ARCHIVO: theme.css
+   TEMA GLOBAL COMPARTIDO DE S.M.I. CORE
+   --------------------------------------------------------------------------
+
+   Este archivo centraliza los estilos reutilizables que comparten las distintas
+   vistas de la aplicacion S.M.I. CORE.
+
+   Su objetivo es evitar duplicaciones de CSS y proporcionar una apariencia
+   coherente entre pantallas que comparten componentes visuales y patrones de
+   interaccion.
+
+   RESPONSABILIDADES PRINCIPALES
+   -----------------------------
+   1. Definir la apariencia global del modo claro.
+   2. Adaptar botones, tarjetas, inputs y componentes al tema seleccionado.
+   3. Gestionar el aspecto visual del selector de tema.
+   4. Definir el modal de confirmacion de cierre de sesion.
+   5. Implementar el comportamiento visual del menu movil compartido.
+   6. Unificar inputs, selects y controles de formulario.
+   7. Dibujar iconos auxiliares mediante CSS.
+   8. Sustituir elementos visuales dependientes del navegador.
+   9. Personalizar Flatpickr en modo oscuro y claro.
+   10. Mantener consistencia visual entre todas las vistas del proyecto.
+
+   Muchas reglas utilizan !important de forma intencionada porque este archivo se
+   carga como capa global de unificacion sobre estilos locales de otras vistas.
+
+   Este archivo no contiene logica JavaScript. El comportamiento dinamico del tema,
+   menu lateral y cierre de sesion se implementa desde theme.js.
+   ========================================================================== */
+
+/* ==========================================================================
+   VARIABLES PRINCIPALES DEL MODO CLARO
+   --------------------------------------------------------------------------
+   El selector [data-theme="light"] permite sobrescribir las variables generales
+   cuando el usuario activa el tema claro. Al trabajar con variables CSS, gran
+   parte de la interfaz se adapta automaticamente sin redefinir cada componente.
+   ========================================================================== */
+:root[data-theme="light"] {
+    /* Fondo general de la aplicacion. */
+    --bg-main: #f4f7fb;
+
+    /* Fondo de paneles y tarjetas. */
+    --panel-bg: #ffffff;
+
+    /* Color principal para enlaces, focos y acciones. */
+    --accent-blue: #1f66d1;
+
+    /* Color asociado a estados correctos. */
+    --accent-green: #20844f;
+
+    /* Color asociado a errores, alertas y peligro. */
+    --accent-red: #cb3d3d;
+
+    /* Color de advertencia. */
+    --accent-orange: #b97212;
+
+    /* Color auxiliar de determinados indicadores. */
+    --accent-purple: #6b57d6;
+
+    /* Color comun de bordes y separadores. */
+    --border: #d8e1ec;
+
+    /* Color del texto principal. */
+    --text-main: #142133;
+
+    /* Color del texto secundario. */
+    --text-dim: #5d6d80;
+
+    /* Lineas principales del plano de planta. */
+    --blueprint-line: #80a5cf;
+
+    /* Cuadricula secundaria del plano. */
+    --blueprint-grid: #dbe8f6;
+}
+
+/* Aplica al BODY la paleta general definida para el modo claro. */
+:root[data-theme="light"] body {
+    background-color: var(--bg-main);
+    color: var(--text-main);
+}
+
+/*
+ * Bootstrap fuerza texto blanco mediante .text-white. En modo claro se sustituye
+ * por el color principal para conservar contraste.
+ */
+:root[data-theme="light"] .text-white {
+    color: var(--text-main) !important;
+}
+
+:root[data-theme="light"] .text-muted {
+    color: #66788b !important;
+}
+
+:root[data-theme="light"] .btn-download,
+:root[data-theme="light"] .btn-save-settings {
+    color: #ffffff;
+}
+
+/*
+ * Botones secundarios en modo claro: superficie blanca, borde suave y texto
+ * oscuro para mantener una jerarquia menor que las acciones principales.
+ */
+:root[data-theme="light"] body .btn-factory,
+:root[data-theme="light"] body .btn-secondary-custom {
+    background: #ffffff;
+    color: var(--text-main) !important;
+    border-color: #bfd0e4;
+    box-shadow: 0 1px 2px rgba(20, 33, 51, 0.06);
+}
+
+:root[data-theme="light"] body .btn-factory:hover,
+:root[data-theme="light"] body .btn-secondary-custom:hover {
+    background: #eef4fb;
+    border-color: #97b8df;
+}
+
+:root[data-theme="light"] body .btn-factory[style*="accent-blue"],
+:root[data-theme="light"] body .btn-secondary-custom[style*="accent-blue"] {
+    color: var(--accent-blue) !important;
+    border-color: rgba(31, 102, 209, 0.35) !important;
+}
+
+:root[data-theme="light"] body .btn-factory[style*="accent-green"] {
+    color: var(--accent-green) !important;
+    border-color: rgba(32, 132, 79, 0.35) !important;
+}
+
+/* ==========================================================================
+   SUPERFICIES Y CONTROLES EN MODO CLARO
+   --------------------------------------------------------------------------
+   Se unifican fondos, colores y bordes de componentes que en el tema oscuro
+   utilizan superficies casi negras.
+   ========================================================================== */
+:root[data-theme="light"] body .report-icon,
+:root[data-theme="light"] body .asset-icon-box,
+:root[data-theme="light"] body .telemetry-item,
+:root[data-theme="light"] body .task-card,
+:root[data-theme="light"] body .health-bar-bg,
+:root[data-theme="light"] body .input-custom,
+:root[data-theme="light"] body .input-factory,
+:root[data-theme="light"] body .input-audit,
+:root[data-theme="light"] body .diagnostic-item,
+:root[data-theme="light"] body select,
+:root[data-theme="light"] body input,
+:root[data-theme="light"] body textarea {
+    background: #f8fbff;
+    color: var(--text-main);
+    border-color: #d5e1ee;
+    box-shadow: none;
+}
+
+:root[data-theme="light"] body .asset-card {
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    box-shadow: 0 10px 24px rgba(20, 33, 51, 0.05);
+}
+
+:root[data-theme="light"] body .asset-card.warning {
+    background: linear-gradient(180deg, rgba(185, 114, 18, 0.08) 0%, rgba(185, 114, 18, 0.03) 100%);
+}
+
+:root[data-theme="light"] body .asset-card.danger {
+    background: linear-gradient(180deg, rgba(203, 61, 61, 0.08) 0%, rgba(203, 61, 61, 0.03) 100%);
+}
+
+:root[data-theme="light"] body .health-good,
+:root[data-theme="light"] body .health-warn,
+:root[data-theme="light"] body .health-crit {
+    box-shadow: none;
+}
+
+/*
+ * El plano de planta sustituye el fondo oscuro por una superficie clara sin perder
+ * profundidad visual.
+ */
+:root[data-theme="light"] body .map-container {
+    background: linear-gradient(180deg, #f8fbff 0%, #edf4fb 100%);
+    border-color: #cbd9e8;
+    box-shadow: inset 0 0 0 1px rgba(31, 102, 209, 0.05);
+}
+
+:root[data-theme="light"] body .sensor-point {
+    border-color: #f8fbff;
+}
+
+:root[data-theme="light"] body .sensor-id {
+    background: rgba(255, 255, 255, 0.94);
+    color: #17304d;
+    border-color: #c7d8eb;
+}
+
+:root[data-theme="light"] body .sensor-tooltip {
+    background: rgba(255, 255, 255, 0.96);
+    color: var(--text-main);
+    border-color: #c7d8eb;
+    box-shadow: 0 14px 30px rgba(20, 33, 51, 0.14);
+}
+
+:root[data-theme="light"] body .tooltip-ok {
+    border-color: #c7d8eb;
+    box-shadow: 0 12px 26px rgba(20, 33, 51, 0.12);
+}
+
+:root[data-theme="light"] body .tooltip-alert {
+    box-shadow: 0 14px 28px rgba(203, 61, 61, 0.16);
+}
+
+:root[data-theme="light"] body input[type="date"].input-custom,
+:root[data-theme="light"] body select.input-custom,
+:root[data-theme="light"] body select.input-factory,
+:root[data-theme="light"] body select.input-audit,
+:root[data-theme="light"] body input.input-factory,
+:root[data-theme="light"] body input.input-audit,
+:root[data-theme="light"] body input[type="search"].input-audit {
+    color-scheme: light;
+}
+
+/*
+ * El icono de calendario se incorpora mediante un SVG embebido en una data URI,
+ * evitando depender de un fichero externo.
+ */
+:root[data-theme="light"] body input[type="date"].input-custom {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23566b84' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2v4'/%3E%3Cpath d='M16 2v4'/%3E%3Crect width='18' height='18' x='3' y='4' rx='2'/%3E%3Cpath d='M3 10h18'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 13px 13px;
+}
+
+:root[data-theme="light"] body .btn-audit {
+    background: #ffffff;
+    color: var(--text-main);
+    border-color: #bfd0e4;
+}
+
+:root[data-theme="light"] body .btn-audit.primary {
+    color: #ffffff;
+    border-color: var(--accent-blue);
+}
+
+/*
+ * Contenedor del selector de tema. El margen superior lo separa del resto de
+ * opciones del sidebar.
+ */
+.theme-toggle-wrap {
+    margin-top: 14px;
+}
+
+/* ==========================================================================
+   SINCRONIZACION VISUAL DEL SIDEBAR
+   --------------------------------------------------------------------------
+   Mientras theme.js recompone el menu lateral, la zona dinamica se mantiene
+   oculta para evitar parpadeos o estados intermedios durante la carga.
+   ========================================================================== */
+html:not(.sidebar-ready) .sidebar-footer {
+    visibility: hidden;
+    opacity: 0;
+}
+
+html.sidebar-ready .sidebar-footer {
+    visibility: visible;
+    opacity: 1;
+    transition: opacity 0.18s ease;
+}
+
+/* ==========================================================================
+   BOTON REUTILIZABLE DE CAMBIO DE TEMA
+   --------------------------------------------------------------------------
+   Este control puede insertarse en distintas vistas para alternar entre el modo
+   claro y oscuro manteniendo una apariencia uniforme.
+   ========================================================================== */
+.theme-toggle {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-main);
+    min-height: 38px;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 700;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.theme-toggle:hover {
+    background: rgba(88, 166, 255, 0.08);
+    border-color: rgba(88, 166, 255, 0.35);
+}
+
+/*
+ * Variante flotante del selector de tema para vistas donde no se integra dentro
+ * del menu lateral.
+ */
+.theme-toggle-floating {
+    position: fixed;
+    top: 18px;
+    right: 18px;
+    width: auto;
+    min-width: 132px;
+    z-index: 1100;
+    background: var(--panel-bg);
+}
+
+/* ==========================================================================
+   CIERRE DE SESION
+   --------------------------------------------------------------------------
+   El enlace de logout utiliza colores de peligro para diferenciarlo del resto de
+   acciones de navegacion.
+   ========================================================================== */
+.logout-link {
+    color: #ff8f88 !important;
+    border: 1px solid rgba(248, 81, 73, 0.24);
+    background: rgba(248, 81, 73, 0.05);
+}
+
+.logout-link:hover {
+    background: rgba(248, 81, 73, 0.08) !important;
+    border-color: rgba(248, 81, 73, 0.35);
+    color: #ffb4ae !important;
+}
+
+/*
+ * Mientras el modal permanece abierto se bloquea el desplazamiento del contenido
+ * situado debajo.
+ */
+.logout-modal-open {
+    overflow: hidden !important;
+}
+
+/*
+ * Contenedor global del modal. inset: 0 hace que cubra toda la ventana.
+ */
+.logout-confirm-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 3000;
+    display: none;
+}
+
+.logout-confirm-modal.visible {
+    display: block;
+}
+
+/*
+ * Capa semitransparente situada entre la pagina y el cuadro de confirmacion.
+ */
+.logout-confirm-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(4, 8, 13, 0.72);
+    backdrop-filter: blur(4px);
+}
+
+/*
+ * Dialogo principal de confirmacion. La funcion min() limita su anchura para que
+ * siga siendo usable en escritorio y movil.
+ */
+.logout-confirm-dialog {
+    position: relative;
+    width: min(100% - 28px, 420px);
+    margin: min(16vh, 120px) auto 0;
+    padding: 24px;
+    border-radius: 16px;
+    border: 1px solid rgba(248, 81, 73, 0.2);
+    background: linear-gradient(180deg, rgba(22,27,34,0.98) 0%, rgba(13,17,23,0.98) 100%);
+    box-shadow: 0 28px 64px rgba(0, 0, 0, 0.42);
+}
+
+.logout-confirm-eyebrow {
+    color: #ff8f88;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 10px;
+}
+
+.logout-confirm-title {
+    margin: 0 0 10px;
+    color: var(--text-main);
+    font-size: 1.45rem;
+    font-weight: 700;
+}
+
+.logout-confirm-text {
+    margin: 0;
+    color: var(--text-dim);
+    line-height: 1.6;
+    font-size: 14px;
+}
+
+.logout-confirm-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 22px;
+}
+
+.logout-confirm-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 122px;
+    min-height: 42px;
+    padding: 8px 14px;
+    border-radius: 11px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-main);
+    background: rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+}
+
+.logout-confirm-cancel:hover {
+    border-color: rgba(88, 166, 255, 0.26);
+    color: var(--accent-blue);
+}
+
+/*
+ * Variante de peligro utilizada para confirmar definitivamente el cierre de
+ * sesion.
+ */
+.logout-confirm-danger {
+    color: #fff1f0;
+    background: linear-gradient(180deg, rgba(248,81,73,0.92) 0%, rgba(213,58,50,0.92) 100%);
+    border-color: rgba(248, 81, 73, 0.4);
+    box-shadow: 0 10px 24px rgba(248, 81, 73, 0.2);
+}
+
+.logout-confirm-danger:hover {
+    color: #ffffff;
+    filter: brightness(1.04);
+}
+
+:root[data-theme="light"] /* ==========================================================================
+   CIERRE DE SESION
+   --------------------------------------------------------------------------
+   El enlace de logout utiliza colores de peligro para diferenciarlo del resto de
+   acciones de navegacion.
+   ========================================================================== */
+.logout-link {
+    color: #c13f3a !important;
+    background: rgba(203, 61, 61, 0.06);
+    border-color: rgba(203, 61, 61, 0.24);
+}
+
+:root[data-theme="light"] /*
+ * Capa semitransparente situada entre la pagina y el cuadro de confirmacion.
+ */
+.logout-confirm-backdrop {
+    background: rgba(20, 33, 51, 0.34);
+}
+
+:root[data-theme="light"] /*
+ * Dialogo principal de confirmacion. La funcion min() limita su anchura para que
+ * siga siendo usable en escritorio y movil.
+ */
+.logout-confirm-dialog {
+    border-color: rgba(203, 61, 61, 0.16);
+    background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(244,247,251,0.98) 100%);
+    box-shadow: 0 24px 52px rgba(20, 33, 51, 0.18);
+}
+
+:root[data-theme="light"] .logout-confirm-eyebrow {
+    color: #c13f3a;
+}
+
+:root[data-theme="light"] .logout-confirm-cancel {
+    background: rgba(255, 255, 255, 0.9);
+    border-color: rgba(31, 102, 209, 0.18);
+}
+
+@media (max-width: 560px) {
+    /* Version compacta del conmutador para movil. */
+    /*
+ * Contenedor del selector de tema. El margen superior lo separa del resto de
+ * opciones del sidebar.
+ */
+.theme-toggle-wrap {
+        margin-top: 10px;
+    }
+
+    .theme-toggle {
+        min-height: 34px;
+        font-size: 11px;
+        padding: 7px 10px;
+    }
+
+    /*
+ * Variante flotante del selector de tema para vistas donde no se integra dentro
+ * del menu lateral.
+ */
+.theme-toggle-floating {
+        top: 12px;
+        right: 12px;
+        min-width: 112px;
+    }
+
+    /*
+ * Dialogo principal de confirmacion. La funcion min() limita su anchura para que
+ * siga siendo usable en escritorio y movil.
+ */
+.logout-confirm-dialog {
+        width: min(100% - 20px, 420px);
+        margin-top: 90px;
+        padding: 20px 18px;
+    }
+
+    .logout-confirm-actions {
+        flex-direction: column-reverse;
+    }
+
+    .logout-confirm-button {
+        width: 100%;
+    }
+
+}
+
+/* ==========================================================================
+   MENU MOVIL COMPARTIDO
+   --------------------------------------------------------------------------
+   En telefonos el sidebar pasa a convertirse en un panel superior plegable para
+   evitar rejillas de navegacion demasiado comprimidas.
+
+   La logica de theme.js agrega o elimina las clases has-mobile-sidebar y
+   mobile-sidebar-open. Este archivo define unicamente su representacion visual.
+   ========================================================================== */
+/*
+ * El boton hamburguesa permanece oculto fuera del breakpoint movil.
+ */
+.mobile-nav-toggle {
+    display: none;
+}
+
+@media (max-width: 560px) {
+    /*
+     * Se reserva espacio superior para evitar que la barra fija cubra el contenido.
+     */
+    body.has-mobile-sidebar {
+        padding-top: 78px !important;
+    }
+
+    /*
+     * El sidebar se convierte en una cabecera superior fija y plegable.
+     */
+    body.has-mobile-sidebar .sidebar {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        height: auto !important;
+        max-height: 74px !important;
+        padding: 14px 14px 12px !important;
+        overflow: hidden !important;
+        border-right: none !important;
+        border-bottom: 1px solid var(--border) !important;
+        background: color-mix(in srgb, var(--panel-bg) 92%, #000 8%) !important;
+        backdrop-filter: blur(14px);
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
+        transition: max-height 0.24s ease, box-shadow 0.24s ease;
+    }
+
+    body.has-mobile-sidebar .logo-box {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 12px;
+        margin-bottom: 0 !important;
+        padding-left: 0 !important;
+    }
+
+    body.has-mobile-sidebar .logo-box h5 {
+        margin-bottom: 2px !important;
+    }
+
+    body.has-mobile-sidebar /*
+ * Contenedor del selector de tema. El margen superior lo separa del resto de
+ * opciones del sidebar.
+ */
+.theme-toggle-wrap {
+        display: none !important;
+    }
+
+    body.mobile-sidebar-open /*
+ * Contenedor del selector de tema. El margen superior lo separa del resto de
+ * opciones del sidebar.
+ */
+.theme-toggle-wrap {
+        display: block !important;
+        width: 100%;
+        margin-top: 12px;
+    }
+
+    body.mobile-sidebar-open .theme-toggle {
+        width: 100%;
+    }
+
+    /*
+ * El boton hamburguesa permanece oculto fuera del breakpoint movil.
+ */
+.mobile-nav-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        flex-direction: column;
+        width: 46px;
+        min-width: 46px;
+        height: 42px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--text-main);
+        transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+    }
+
+    .mobile-nav-toggle:hover {
+        background: rgba(88, 166, 255, 0.08);
+        border-color: rgba(88, 166, 255, 0.35);
+    }
+
+    .mobile-nav-toggle-line {
+        display: block;
+        width: 18px;
+        height: 2px;
+        border-radius: 999px;
+        background: currentColor;
+        transition: transform 0.2s ease, opacity 0.2s ease;
+    }
+
+    body.mobile-sidebar-open .mobile-nav-toggle-line:nth-child(1) {
+        transform: translateY(6px) rotate(45deg);
+    }
+
+    body.mobile-sidebar-open .mobile-nav-toggle-line:nth-child(2) {
+        opacity: 0;
+    }
+
+    body.mobile-sidebar-open .mobile-nav-toggle-line:nth-child(3) {
+        transform: translateY(-6px) rotate(-45deg);
+    }
+
+    body.has-mobile-sidebar .nav-list,
+    body.has-mobile-sidebar .sidebar-footer {
+        display: none !important;
+    }
+
+    /*
+     * Al abrir el menu se amplia hasta casi toda la altura dinamica del viewport.
+     */
+    body.mobile-sidebar-open .sidebar {
+        max-height: calc(100dvh - 10px) !important;
+        overflow-y: auto !important;
+        box-shadow: 0 18px 42px rgba(0, 0, 0, 0.32);
+    }
+
+    body.mobile-sidebar-open .nav-list,
+    body.mobile-sidebar-open .sidebar-footer {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 8px !important;
+        margin-top: 14px !important;
+        padding-bottom: 6px !important;
+    }
+
+    body.mobile-sidebar-open .sidebar-divider,
+    body.mobile-sidebar-open .sidebar-label {
+        display: block !important;
+    }
+
+    body.mobile-sidebar-open .nav-item {
+        width: 100% !important;
+        min-height: 44px !important;
+        margin-bottom: 0 !important;
+        justify-content: flex-start !important;
+        text-align: left !important;
+        white-space: normal !important;
+        overflow-wrap: anywhere !important;
+        padding: 11px 14px !important;
+        font-size: 14px !important;
+    }
+
+    body.has-mobile-sidebar .main-content {
+        margin-left: 0 !important;
+    }
+}
+
+/* ==========================================================================
+   CONTROLES DE FORMULARIO COMPARTIDOS
+   --------------------------------------------------------------------------
+   Estas reglas unifican inputs, selects, botones personalizados y envolturas de
+   fecha procedentes de distintas vistas.
+
+   El uso de body aumenta ligeramente la especificidad y !important permite que
+   esta capa global prevalezca sobre estilos locales incompatibles.
+   ========================================================================== */
+/*
+ * Altura, borde, fondo, color y transiciones comunes de los controles.
+ */
+body .custom-select-btn,
+body .input-custom,
+body .input-factory,
+body .input-audit,
+body .control,
+body .field input,
+body .field select,
+body .flatpickr-input {
+    min-height: 44px !important;
+    border-radius: 12px !important;
+    border: 1px solid var(--border) !important;
+    background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.015) 100%), var(--bg-main) !important;
+    color: var(--text-main) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03) !important;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease !important;
+}
+
+/*
+ * Altura, borde, fondo, color y transiciones comunes de los controles.
+ */
+body .custom-select-btn,
+body .input-custom,
+body .input-factory,
+body .input-audit,
+body .control,
+body .field input,
+body .field select,
+body .flatpickr-input {
+    padding: 0 42px 0 14px !important;
+    font-size: 13px !important;
+}
+
+/* Estado hover compartido por los controles de formulario. */
+body .custom-select-btn:hover,
+body .input-custom:hover,
+body .input-factory:hover,
+body .input-audit:hover,
+body .control:hover,
+body .field input:hover,
+body .field select:hover,
+body .flatpickr-input:hover {
+    border-color: #4b5563 !important;
+}
+
+/*
+ * Estado de foco compartido. El halo azul facilita identificar el control activo.
+ */
+body .custom-select-btn:focus,
+body .input-custom:focus,
+body .input-factory:focus,
+body .input-audit:focus,
+body .control:focus,
+body .field input:focus,
+body .field select:focus,
+body .flatpickr-input:focus {
+    outline: none !important;
+    border-color: rgba(88, 166, 255, 0.55) !important;
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.12) !important;
+}
+
+/* ==========================================================================
+   SELECT NATIVO PERSONALIZADO
+   --------------------------------------------------------------------------
+   Se elimina la flecha que dibuja cada navegador y se sustituye por un SVG
+   embebido para mantener la misma apariencia en todos los sistemas.
+   ========================================================================== */
+body select.input-custom,
+body select.input-factory,
+body select.input-audit,
+body select.control,
+body .field select {
+    /* Sustituimos la flecha nativa por una propia para que todos los selects
+       se vean igual independientemente del navegador o del sistema operativo. */
+    appearance: none !important;
+    -webkit-appearance: none !important;
+    -moz-appearance: none !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23a7b7ca' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: right 14px center !important;
+    background-size: 14px 14px !important;
+    cursor: pointer !important;
+}
+
+/* ==========================================================================
+   ENVOLTURAS DE CAMPOS DE FECHA
+   --------------------------------------------------------------------------
+   Los pseudo-elementos permiten dibujar un icono de calendario sin modificar el
+   HTML de cada formulario.
+   ========================================================================== */
+body .date-shell,
+body .input-shell {
+    /* Envolturas auxiliares para dibujar iconos sin ensuciar el HTML. */
+    position: relative !important;
+}
+
+body .date-shell::before,
+body .input-shell::before {
+    /* Marco exterior del icono de calendario. */
+    content: "" !important;
+    position: absolute !important;
+    top: 50% !important;
+    right: 14px !important;
+    transform: translateY(-50%) !important;
+    width: 16px !important;
+    height: 16px !important;
+    border: 1.8px solid #c8d2de !important;
+    border-radius: 4px !important;
+    box-shadow: inset 0 -2px 0 rgba(200, 210, 222, 0.35) !important;
+    pointer-events: none !important;
+}
+
+body .date-shell::after,
+body .input-shell::after {
+    /* Lineas superiores del icono de calendario. */
+    content: "" !important;
+    position: absolute !important;
+    top: calc(50% - 5px) !important;
+    right: 18px !important;
+    width: 8px !important;
+    height: 2px !important;
+    background: #c8d2de !important;
+    border-radius: 999px !important;
+    pointer-events: none !important;
+    box-shadow:
+        0 -4px 0 0 #c8d2de,
+        -4px -4px 0 -1px #c8d2de,
+        4px -4px 0 -1px #c8d2de !important;
+}
+
+/* ==========================================================================
+   PERSONALIZACION GLOBAL DE FLATPICKR
+   --------------------------------------------------------------------------
+   Flatpickr es la libreria externa utilizada para seleccionar fechas y horas.
+
+   Estas reglas sustituyen su aspecto predeterminado para integrarlo con la
+   identidad visual del sistema. Reportes, historico y formularios de fecha
+   comparten asi una misma familia visual.
+   ========================================================================== */
+/* Contenedor exterior del calendario en modo oscuro. */
+body .flatpickr-calendar {
+    background: #161b22 !important;
+    border: 1px solid #2f3843 !important;
+    border-radius: 16px !important;
+    box-shadow: 0 22px 40px rgba(0,0,0,0.38) !important;
+    overflow: hidden !important;
+}
+
+body .flatpickr-months {
+    background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%) !important;
+    border-bottom: 1px solid rgba(255,255,255,0.05) !important;
+    padding-top: 6px !important;
+}
+
+/*
+ * Se unifican color y relleno de textos y controles internos de Flatpickr.
+ */
+body .flatpickr-current-month,
+body .flatpickr-current-month .flatpickr-monthDropdown-months,
+body .flatpickr-current-month input.cur-year,
+body .flatpickr-months .flatpickr-month,
+body .flatpickr-weekdays,
+body span.flatpickr-weekday,
+body .flatpickr-time input,
+body .flatpickr-time .flatpickr-time-separator,
+body .flatpickr-time .flatpickr-am-pm,
+body .flatpickr-day {
+    color: #e6edf3 !important;
+    fill: #e6edf3 !important;
+}
+
+body .flatpickr-current-month {
+    padding-top: 8px !important;
+    font-size: 18px !important;
+    font-weight: 700 !important;
+}
+
+body .flatpickr-current-month .flatpickr-monthDropdown-months:hover,
+body .flatpickr-current-month input.cur-year:hover {
+    background: rgba(88,166,255,0.08) !important;
+    border-radius: 8px !important;
+}
+
+body .flatpickr-weekdays {
+    background: transparent !important;
+}
+
+body span.flatpickr-weekday {
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    opacity: 0.92 !important;
+}
+
+body .flatpickr-days {
+    padding: 2px 0 8px !important;
+}
+
+body .flatpickr-rContainer,
+body .flatpickr-days,
+body .flatpickr-days .dayContainer {
+    /* Forzamos anchura estable para evitar rejillas desalineadas. */
+    width: 100% !important;
+    min-width: 0 !important;
+}
+
+body .flatpickr-days .dayContainer {
+    /* Las semanas se dibujan como filas flexibles de 7 dias. */
+    display: flex !important;
+    flex-wrap: wrap !important;
+}
+
+body .flatpickr-day {
+    /* Cada celda ocupa exactamente 1/7 del calendario visible. */
+    box-sizing: border-box !important;
+    flex: 0 0 calc(100% / 7) !important;
+    width: calc(100% / 7) !important;
+    max-width: calc(100% / 7) !important;
+    border-radius: 999px !important;
+    height: 38px !important;
+    line-height: 38px !important;
+    font-weight: 600 !important;
+}
+
+body .flatpickr-day.flatpickr-disabled,
+body .flatpickr-day.prevMonthDay,
+body .flatpickr-day.nextMonthDay {
+    /* Los dias fuera del mes se ven, pero con menos protagonismo. */
+    color: #697587 !important;
+}
+
+body .flatpickr-day.today {
+    border-color: rgba(88, 166, 255, 0.7) !important;
+    color: #eef5ff !important;
+}
+
+/*
+ * Estados visuales de un dia seleccionado o de los extremos de un rango.
+ */
+body .flatpickr-day.selected,
+body .flatpickr-day.startRange,
+body .flatpickr-day.endRange,
+body .flatpickr-day.selected:hover,
+body .flatpickr-day.startRange:hover,
+body .flatpickr-day.endRange:hover {
+    background: linear-gradient(180deg, #2f81f7 0%, #1f6feb 100%) !important;
+    border-color: #2f81f7 !important;
+    color: #ffffff !important;
+}
+
+body .flatpickr-day.today:hover,
+body .flatpickr-day:hover {
+    background: rgba(88,166,255,0.1) !important;
+}
+
+body .flatpickr-months .flatpickr-prev-month,
+body .flatpickr-months .flatpickr-next-month {
+    padding: 8px 12px !important;
+}
+
+body .flatpickr-months .flatpickr-prev-month svg,
+body .flatpickr-months .flatpickr-next-month svg {
+    width: 15px !important;
+    height: 15px !important;
+    fill: #c9d6e4 !important;
+}
+
+body .flatpickr-months .flatpickr-prev-month:hover svg,
+body .flatpickr-months .flatpickr-next-month:hover svg {
+    fill: #58a6ff !important;
+}
+
+/* ==========================================================================
+   SELECTOR HORARIO DE FLATPICKR
+   --------------------------------------------------------------------------
+   Esta parte solo aparece en vistas que permiten seleccionar fecha y hora.
+   ========================================================================== */
+body .flatpickr-time {
+    /* Pie de seleccion horaria para vistas que usan fecha y hora. */
+    border-top: 1px solid rgba(255,255,255,0.08) !important;
+    background: rgba(255,255,255,0.02) !important;
+    height: 46px !important;
+}
+
+body .flatpickr-time .numInputWrapper {
+    background: #263241 !important;
+}
+
+body .flatpickr-time .numInputWrapper span {
+    border-left: 1px solid rgba(255,255,255,0.12) !important;
+    width: 28px !important;
+    background: #314055 !important;
+    overflow: visible !important;
+}
+
+body .flatpickr-time .numInputWrapper span.arrowUp::after {
+    /* Indicador de incremento para horas/minutos. */
+    border-bottom-color: #ffffff !important;
+    border-width: 0 4px 5px 4px !important;
+    top: 5px !important;
+}
+
+body .flatpickr-time .numInputWrapper span.arrowDown::after {
+    /* Indicador de decremento para horas/minutos. */
+    border-top-color: #ffffff !important;
+    border-width: 5px 4px 0 4px !important;
+    top: auto !important;
+    bottom: 5px !important;
+}
+
+body .flatpickr-time .numInputWrapper:hover,
+body .flatpickr-time .numInputWrapper span:hover {
+    background: #3a4e68 !important;
+}
+
+body .flatpickr-time .flatpickr-time-separator {
+    color: #f4f8fc !important;
+    font-weight: 700 !important;
+}
+
+body .flatpickr-time input:hover,
+body .flatpickr-time .flatpickr-am-pm:hover,
+body .flatpickr-time input:focus,
+body .flatpickr-time .flatpickr-am-pm:focus,
+body .flatpickr-time .numInputWrapper span:hover {
+    background: rgba(88,166,255,0.12) !important;
+}
+
+/* ==========================================================================
+   EQUIVALENCIAS EN MODO CLARO
+   --------------------------------------------------------------------------
+   Esta seccion reproduce los componentes globales anteriores sobre superficies
+   claras manteniendo contraste, jerarquia visual y consistencia entre vistas.
+
+   Las dimensiones y el comportamiento no cambian; solo se adaptan los valores
+   visuales necesarios para el tema claro.
+   ========================================================================== */
+:root[data-theme="light"] body .custom-select-btn,
+:root[data-theme="light"] body .input-custom,
+:root[data-theme="light"] body .input-factory,
+:root[data-theme="light"] body .input-audit,
+:root[data-theme="light"] body .control,
+:root[data-theme="light"] body .field input,
+:root[data-theme="light"] body .field select,
+:root[data-theme="light"] body .flatpickr-input {
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%) !important;
+    border-color: #d5e1ee !important;
+    color: #142133 !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.8) !important;
+}
+
+:root[data-theme="light"] body .custom-select-btn:hover,
+:root[data-theme="light"] body .input-custom:hover,
+:root[data-theme="light"] body .input-factory:hover,
+:root[data-theme="light"] body .input-audit:hover,
+:root[data-theme="light"] body .control:hover,
+:root[data-theme="light"] body .field input:hover,
+:root[data-theme="light"] body .field select:hover,
+:root[data-theme="light"] body .flatpickr-input:hover {
+    border-color: #97b8df !important;
+}
+
+:root[data-theme="light"] body select.input-custom,
+:root[data-theme="light"] body select.input-factory,
+:root[data-theme="light"] body select.input-audit,
+:root[data-theme="light"] body select.control,
+:root[data-theme="light"] body .field select {
+    /* La flecha del select tambien cambia de tono para mantener legibilidad. */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%235d6d80' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") !important;
+}
+
+:root[data-theme="light"] body .date-shell::before,
+:root[data-theme="light"] body .input-shell::before {
+    border-color: #5d6d80 !important;
+    box-shadow: inset 0 -2px 0 rgba(93, 109, 128, 0.22) !important;
+}
+
+:root[data-theme="light"] body .date-shell::after,
+:root[data-theme="light"] body .input-shell::after {
+    background: #5d6d80 !important;
+    box-shadow:
+        0 -4px 0 0 #5d6d80,
+        -4px -4px 0 -1px #5d6d80,
+        4px -4px 0 -1px #5d6d80 !important;
+}
+
+:root[data-theme="light"] /* Contenedor exterior del calendario en modo oscuro. */
+body .flatpickr-calendar {
+    background: #ffffff !important;
+    border-color: #d5e1ee !important;
+    box-shadow: 0 16px 30px rgba(20,33,51,0.16) !important;
+}
+
+:root[data-theme="light"] body .flatpickr-months {
+    background: linear-gradient(180deg, rgba(31,102,209,0.04) 0%, rgba(255,255,255,0.9) 100%) !important;
+    border-bottom-color: #e3edf7 !important;
+}
+
+:root[data-theme="light"] body .flatpickr-current-month .flatpickr-monthDropdown-months,
+:root[data-theme="light"] body .flatpickr-current-month input.cur-year,
+:root[data-theme="light"] body .flatpickr-months .flatpickr-month,
+:root[data-theme="light"] body .flatpickr-weekdays,
+:root[data-theme="light"] body span.flatpickr-weekday,
+:root[data-theme="light"] body .flatpickr-time input,
+:root[data-theme="light"] body .flatpickr-time .flatpickr-time-separator,
+:root[data-theme="light"] body .flatpickr-time .flatpickr-am-pm,
+:root[data-theme="light"] body .flatpickr-day {
+    color: #142133 !important;
+    fill: #142133 !important;
+}
+
+:root[data-theme="light"] body .flatpickr-day.flatpickr-disabled,
+:root[data-theme="light"] body .flatpickr-day.prevMonthDay,
+:root[data-theme="light"] body .flatpickr-day.nextMonthDay {
+    color: #9aa9bb !important;
+}
+
+:root[data-theme="light"] body .flatpickr-day.selected,
+:root[data-theme="light"] body .flatpickr-day.startRange,
+:root[data-theme="light"] body .flatpickr-day.endRange,
+:root[data-theme="light"] body .flatpickr-day.selected:hover,
+:root[data-theme="light"] body .flatpickr-day.startRange:hover,
+:root[data-theme="light"] body .flatpickr-day.endRange:hover {
+    background: linear-gradient(180deg, #3277df 0%, #1f66d1 100%) !important;
+    border-color: #3277df !important;
+    color: #ffffff !important;
+}
+
+:root[data-theme="light"] /* ==========================================================================
+   SELECTOR HORARIO DE FLATPICKR
+   --------------------------------------------------------------------------
+   Esta parte solo aparece en vistas que permiten seleccionar fecha y hora.
+   ========================================================================== */
+body .flatpickr-time {
+    border-top-color: #e3edf7 !important;
+    background: #f8fbff !important;
+}
+
+:root[data-theme="light"] body .flatpickr-time .numInputWrapper {
+    background: #dfe9f5 !important;
+}
+
+:root[data-theme="light"] body .flatpickr-time .numInputWrapper span {
+    border-left-color: #c7d7ea !important;
+    background: #edf4fb !important;
+}
+
+:root[data-theme="light"] body .flatpickr-time .numInputWrapper span.arrowUp::after {
+    border-bottom-color: #1f3550 !important;
+}
+
+:root[data-theme="light"] body .flatpickr-time .numInputWrapper span.arrowDown::after {
+    border-top-color: #1f3550 !important;
+}
+
+:root[data-theme="light"] body .flatpickr-time .numInputWrapper:hover,
+:root[data-theme="light"] body .flatpickr-time .numInputWrapper span:hover {
+    background: #d4e3f3 !important;
+}
+
+:root[data-theme="light"] body .flatpickr-time .flatpickr-time-separator {
+    color: #1f3550 !important;
+}
+
+:root[data-theme="light"] body .flatpickr-time input:hover,
+:root[data-theme="light"] body .flatpickr-time .flatpickr-am-pm:hover,
+:root[data-theme="light"] body .flatpickr-time input:focus,
+:root[data-theme="light"] body .flatpickr-time .flatpickr-am-pm:focus,
+:root[data-theme="light"] body .flatpickr-time .numInputWrapper span:hover,
+:root[data-theme="light"] body .flatpickr-day:hover {
+    background: rgba(31,102,209,0.08) !important;
+}

@@ -1,0 +1,1079 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <!--
+        ============================================================================
+        ARCHIVO: historial-configuracion.html
+        DESCRIPCION GENERAL
+        ============================================================================
+
+        Este archivo implementa la vista de registro de configuracion y auditoria
+        del sistema S.M.I. CORE.
+
+        Su responsabilidad principal consiste en mostrar la trazabilidad de los
+        cambios efectuados sobre los parametros de configuracion del sistema. Para
+        cada modificacion se presenta informacion relativa a la fecha, el parametro
+        afectado, el valor anterior, el nuevo valor, el nivel de impacto, el
+        operario responsable y el origen desde el que se realizo la modificacion.
+
+        La vista obtiene los registros desde el backend mediante una peticion HTTP
+        a la API de auditoria. Una vez recibidos, los datos se almacenan temporalmente
+        en memoria para permitir operaciones de filtrado y representacion sin tener
+        que realizar una nueva consulta al servidor por cada interaccion del usuario.
+
+        Ademas de la tabla detallada, la pagina calcula varios indicadores (KPIs)
+        que proporcionan un resumen de la informacion actualmente visible. Entre
+        ellos se incluyen el numero total de eventos, la cantidad de cambios
+        clasificados como criticos, la fecha del ultimo cambio y el operario asociado.
+
+        La pagina tambien permite:
+        - Buscar registros mediante texto libre.
+        - Filtrar los resultados segun su nivel de impacto.
+        - Actualizar manualmente los datos consultando de nuevo la API.
+        - Exportar los registros filtrados a un archivo CSV.
+        - Adaptar la interfaz a distintos tamanos de pantalla mediante reglas
+          de diseno responsive.
+
+        FLUJO GENERAL DE FUNCIONAMIENTO
+        --------------------------------
+        1. Al cargarse la pagina se solicita el registro de cambios al backend.
+        2. Los datos obtenidos se almacenan en la variable registrosAuditoria.
+        3. Cada registro se clasifica segun el tipo de evento y su impacto.
+        4. Los filtros seleccionados por el usuario se aplican sobre los datos
+           almacenados localmente.
+        5. Los KPIs y la tabla se vuelven a representar con los resultados filtrados.
+        6. Cuando se solicita una exportacion, solamente se incluyen los registros
+           que cumplen los filtros activos en ese momento.
+
+        La logica de presentacion permanece separada de la obtencion de datos:
+        la API proporciona los registros originales y las funciones JavaScript de
+        este archivo se encargan de clasificarlos, filtrarlos y mostrarlos.
+        ============================================================================
+    -->
+    <!-- Define la codificacion de caracteres utilizada por el documento. -->
+    <meta charset="UTF-8">
+
+    <!-- Permite que el ancho de la interfaz se adapte correctamente a dispositivos moviles. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Establece el titulo mostrado en la pestana del navegador. -->
+    <title>S.M.I. CORE | Registro de Configuracion</title>
+
+    <!--
+        Se cargan las tipografias empleadas en la interfaz.
+        Inter se utiliza como fuente general y JetBrains Mono para valores tecnicos,
+        fechas y datos que requieren una lectura mas estructurada.
+    -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+
+    <!-- Bootstrap aporta clases auxiliares de maquetacion y estilos reutilizables. -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!--
+        El tema visual se aplica antes de representar la pagina para evitar un cambio
+        visible entre los temas claro y oscuro durante la carga inicial.
+        Si no existe una preferencia almacenada, se utiliza el tema oscuro.
+    -->
+    <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('smi-theme') || 'dark');</script>
+
+    <!-- Hoja de estilos compartida con el resto de vistas de la aplicacion. -->
+    <link href="theme.css" rel="stylesheet">
+
+    <style>
+        /*
+         * VARIABLES GLOBALES DE ESTILO
+         * -------------------------------------------------------------------------
+         * Las variables CSS centralizan los colores principales de la interfaz.
+         * Su utilizacion facilita mantener una apariencia coherente en toda la vista
+         * y permite modificar la paleta sin repetir valores en cada selector.
+         */
+        :root {
+            --bg-main: #0d1117;
+            --panel-bg: #161b22;
+            --panel-soft: #1d232c;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --accent-orange: #d29922;
+            --border: #30363d;
+            --text-main: #e6edf3;
+            --text-dim: #7d8590;
+        }
+
+        /*
+         * CONFIGURACION GENERAL DE LA PAGINA
+         * -------------------------------------------------------------------------
+         * El cuerpo ocupa toda la altura visible y utiliza Flexbox para colocar
+         * lateralmente el menu de navegacion y el contenido principal.
+         */
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+        /*
+         * Se aplica border-box a todos los elementos para que padding y bordes
+         * formen parte del ancho y alto calculado de cada componente.
+         */
+        *, *::before, *::after { box-sizing: border-box; }
+
+        /* Ajusta el color de los textos secundarios utilizados en la vista. */
+        .text-muted { color: #9aa4b2 !important; }
+
+        /*
+         * MENU LATERAL
+         * -------------------------------------------------------------------------
+         * El menu permanece fijo en escritorio y reserva 260 pixeles de ancho.
+         * Esta estructura mantiene disponibles las opciones de navegacion aunque
+         * el contenido central se desplace verticalmente.
+         */
+        .sidebar {
+            width: 260px;
+            height: 100vh;
+            background: var(--panel-bg);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 30px 20px;
+            position: fixed;
+        }
+
+        .logo-box { margin-bottom: 40px; padding-left: 10px; }
+        .nav-list { flex-grow: 1; }
+
+        .nav-item {
+            padding: 10px 14px;
+            color: var(--text-dim);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            border-radius: 6px;
+            margin-bottom: 5px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .nav-item:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-main); }
+        .nav-item.active {
+            background: rgba(88, 166, 255, 0.1);
+            color: var(--accent-blue);
+            border: 1px solid rgba(88, 166, 255, 0.2);
+        }
+
+        .sidebar-divider { height: 1px; background: var(--border); margin: 15px 0; }
+        .sidebar-label {
+            color: var(--text-dim);
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding-left: 14px;
+            margin-bottom: 10px;
+            display: block;
+        }
+
+        /*
+         * CONTENIDO PRINCIPAL
+         * -------------------------------------------------------------------------
+         * El margen izquierdo coincide con la anchura del menu fijo para evitar
+         * que el contenido quede oculto debajo de la barra lateral.
+         */
+        .main-content {
+            margin-left: 260px;
+            padding: 40px;
+            flex-grow: 1;
+            overflow-y: auto;
+        }
+
+        .section-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--text-main);
+            margin-bottom: 5px;
+        }
+
+        /*
+         * BLOQUE DE INDICADORES (KPIs)
+         * -------------------------------------------------------------------------
+         * Los indicadores resumen el conjunto de registros que permanece visible
+         * despues de aplicar los filtros seleccionados por el usuario.
+         */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(160px, 1fr));
+            gap: 16px;
+            margin: 26px 0;
+        }
+
+        .kpi-box {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            min-height: 92px;
+        }
+
+        .kpi-label {
+            color: var(--text-dim);
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .kpi-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--text-main);
+            overflow-wrap: anywhere;
+        }
+
+        /*
+         * BARRA DE FILTROS Y ACCIONES
+         * -------------------------------------------------------------------------
+         * Se utiliza CSS Grid para distribuir el buscador, el selector de impacto
+         * y los botones de actualizacion y exportacion.
+         */
+        .toolbar {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px;
+            display: grid;
+            /*
+             * El buscador ocupa el espacio disponible, el filtro mantiene un ancho
+             * estable y los botones utilizan solamente el espacio que necesitan.
+             */
+            grid-template-columns: minmax(220px, 1fr) 180px auto auto;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 18px;
+        }
+
+        .input-audit {
+            background: #0d1117;
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            border-radius: 6px;
+            padding: 9px 12px;
+            font-size: 12px;
+            min-height: 38px;
+        }
+
+        .btn-audit {
+            background: #21262d;
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            border-radius: 6px;
+            padding: 9px 14px;
+            font-weight: 700;
+            font-size: 12px;
+            min-height: 38px;
+        }
+
+        .btn-audit.primary {
+            background: var(--accent-blue);
+            color: #0d1117;
+            border-color: var(--accent-blue);
+        }
+
+        /*
+         * TABLA DE AUDITORIA
+         * -------------------------------------------------------------------------
+         * El contenedor agrupa visualmente la tabla que presenta cada cambio
+         * registrado por el sistema.
+         */
+        .audit-container {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        table { width: 100%; border-collapse: collapse; }
+
+        th {
+            background: rgba(255, 255, 255, 0.02);
+            color: var(--text-dim);
+            text-align: left;
+            padding: 12px 16px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            border-bottom: 1px solid var(--border);
+        }
+
+        td {
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-main);
+            font-size: 13px;
+            vertical-align: middle;
+        }
+
+        tr:hover td { background: rgba(255, 255, 255, 0.02); }
+
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+        }
+
+        .muted { color: var(--text-dim); }
+
+        /*
+         * REPRESENTACION DEL CAMBIO DE VALOR
+         * -------------------------------------------------------------------------
+         * El valor anterior y el nuevo valor se muestran de forma consecutiva para
+         * que pueda identificarse rapidamente la modificacion realizada.
+         */
+        .change-flow {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .val-old {
+            color: var(--text-dim);
+            text-decoration: line-through;
+            background: rgba(248, 81, 73, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .val-new {
+            color: var(--accent-green);
+            background: rgba(63, 185, 80, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 700;
+        }
+
+        /*
+         * ETIQUETAS DE IMPACTO
+         * -------------------------------------------------------------------------
+         * Cada nivel de impacto dispone de una clase visual diferente. La logica
+         * JavaScript decide que clase corresponde a cada registro.
+         */
+        .badge-impact {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 86px;
+            border-radius: 999px;
+            padding: 4px 8px;
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0.3px;
+            border: 1px solid transparent;
+        }
+
+        .impact-critical {
+            color: var(--accent-red);
+            background: rgba(248, 81, 73, 0.1);
+            border-color: rgba(248, 81, 73, 0.25);
+        }
+
+        .impact-operative {
+            color: var(--accent-orange);
+            background: rgba(210, 153, 34, 0.1);
+            border-color: rgba(210, 153, 34, 0.25);
+        }
+
+        .impact-info {
+            color: var(--accent-blue);
+            background: rgba(88, 166, 255, 0.1);
+            border-color: rgba(88, 166, 255, 0.25);
+        }
+
+        .user-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 700;
+            color: var(--accent-blue);
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-blue);
+        }
+
+        /*
+         * DISENO RESPONSIVE PARA TABLETS Y PANTALLAS MEDIANAS
+         * -------------------------------------------------------------------------
+         * Al reducirse el ancho de pantalla, el menu deja de permanecer fijo y el
+         * contenido se reorganiza para utilizar todo el ancho disponible.
+         */
+        @media (max-width: 980px) {
+            body { display: block; height: auto; overflow: auto; }
+            .sidebar {
+                position: static;
+                width: 100%;
+                max-width: 100%;
+                height: auto;
+                padding: 18px;
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+            }
+            .logo-box { margin-bottom: 18px; padding-left: 0; }
+            .nav-list, .sidebar-footer {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 8px;
+            }
+            .nav-item { margin-bottom: 0; min-height: 42px; }
+            .main-content { margin-left: 0; padding: 24px; }
+            .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .toolbar { grid-template-columns: 1fr; }
+            .audit-container { overflow-x: hidden; }
+            table { min-width: 0; table-layout: fixed; }
+        }
+
+        /*
+         * DISENO RESPONSIVE PARA TELEFONOS MOVILES
+         * -------------------------------------------------------------------------
+         * En pantallas estrechas se simplifica la tabla y se ocultan columnas
+         * secundarias para conservar la legibilidad de la informacion esencial.
+         */
+        @media (max-width: 560px) {
+            .main-content { padding: 18px 14px; }
+            .sidebar { position: sticky; top: 0; z-index: 1000; padding: 12px; }
+            .logo-box { margin-bottom: 10px; }
+            .nav-list, .sidebar-footer {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
+                overflow-x: hidden;
+                gap: 8px;
+                padding-bottom: 4px;
+                scrollbar-width: none;
+            }
+            .nav-list::-webkit-scrollbar, .sidebar-footer::-webkit-scrollbar { display: none; }
+            .sidebar-footer { margin-top: 8px; }
+            .sidebar-footer > div, .sidebar-label { display: none; }
+            .nav-item { min-width: 0; min-height: 36px; white-space: normal; overflow-wrap: anywhere; justify-content: center; text-align: center; padding: 8px 12px; font-size: 13px; }
+            .kpi-grid { grid-template-columns: 1fr; }
+            th, td { padding: 9px 7px; font-size: 11px; overflow-wrap: anywhere; }
+            /*
+             * En dispositivos muy estrechos se ocultan Evento, Cambio aplicado,
+             * Operario y Origen. Se mantienen Fecha, Parametro e Impacto, que
+             * constituyen la informacion principal para una consulta rapida.
+             */
+            th:nth-child(2), td:nth-child(2),
+            th:nth-child(4), td:nth-child(4),
+            th:nth-child(6), td:nth-child(6),
+            th:nth-child(7), td:nth-child(7) { display: none; }
+            th:nth-child(1), td:nth-child(1) { width: 34%; }
+            th:nth-child(3), td:nth-child(3) { width: 38%; }
+            th:nth-child(5), td:nth-child(5) { width: 28%; }
+        }
+    </style>
+</head>
+<body>
+
+<!--
+    ============================================================================
+    NAVEGACION PRINCIPAL
+    ============================================================================
+    La barra lateral permite desplazarse entre las diferentes vistas del sistema.
+    El enlace correspondiente al registro de configuracion se marca como activo
+    para indicar al usuario la seccion en la que se encuentra.
+-->
+<nav class="sidebar">
+    <div class="logo-box">
+        <h5 class="text-white fw-bold mb-0">S.M.I. <span style="color:var(--accent-blue)">CORE</span></h5>
+        <small class="text-muted" style="font-size: 10px; font-family: 'JetBrains Mono';">VER. 2.6.0-STABLE</small>
+    </div>
+
+        <div class="nav-list">
+        <a href="index.html" class="nav-item">Dashboard Vivo</a>
+        <a href="mapa.html" class="nav-item">Mapa de Planta</a>
+        <a href="mantenimiento.html" class="nav-item">Analisis por Zonas</a>
+        <a href="historial.html" class="nav-item">Historial de Datos</a>
+        <a href="reportes.html" class="nav-item">Reportes</a>
+    </div>
+    <div class="sidebar-footer">
+        <div class="sidebar-divider"></div>
+        <small class="sidebar-label">Administracion</small>
+        <a href="configurar-sistema.html" class="nav-item">Configurar Sistema</a>
+        <a href="historial-configuracion.html" class="nav-item active">Registro Config.</a>
+    </div>
+</nav>
+
+<!--
+    ============================================================================
+    CONTENIDO PRINCIPAL DE LA VISTA
+    ============================================================================
+-->
+<main class="main-content">
+    <!-- Encabezado descriptivo de la pagina de auditoria. -->
+    <div>
+        <h4 class="section-title">Registro de Configuracion</h4>
+        <p class="text-muted small m-0">Trazabilidad de cambios aplicados sobre umbrales, nodos y parametros operativos.</p>
+    </div>
+
+    <!--
+        RESUMEN DE INDICADORES
+        Los valores se inicializan con "--" y son sustituidos posteriormente por
+        JavaScript cuando se reciben y procesan los registros de auditoria.
+    -->
+    <section class="kpi-grid">
+        <div class="kpi-box">
+            <div class="kpi-label">Eventos auditados</div>
+            <div class="kpi-value" id="kpiTotal">--</div>
+        </div>
+        <div class="kpi-box">
+            <div class="kpi-label">Impacto critico</div>
+            <div class="kpi-value" id="kpiCritical">--</div>
+        </div>
+        <div class="kpi-box">
+            <div class="kpi-label">Ultimo cambio</div>
+            <div class="kpi-value" id="kpiLast">--</div>
+        </div>
+        <div class="kpi-box">
+            <div class="kpi-label">Operador reciente</div>
+            <div class="kpi-value" id="kpiOperator">--</div>
+        </div>
+    </section>
+
+    <!--
+        CONTROLES DE FILTRADO Y ACCIONES
+        El campo de busqueda realiza filtrado textual, mientras que el selector
+        restringe los resultados a un nivel de impacto concreto.
+    -->
+    <section class="toolbar">
+        <input class="input-audit" id="searchInput" type="search" placeholder="Buscar por parametro, operario u origen">
+        <select class="input-audit" id="impactFilter">
+            <option value="all">Todos los impactos</option>
+            <option value="CRITICO">Critico</option>
+            <option value="OPERATIVO">Operativo</option>
+            <option value="INFO">Informativo</option>
+        </select>
+        <!--
+            El boton Actualizar vuelve a solicitar los datos al backend.
+            El boton Exportar CSV genera un archivo utilizando los filtros activos.
+        -->
+        <button class="btn-audit" type="button" onclick="cargarAuditoria()">Actualizar</button>
+        <button class="btn-audit primary" type="button" onclick="exportarCSV()">Exportar CSV</button>
+    </section>
+
+    <!--
+        TABLA DE RESULTADOS
+        El cuerpo de la tabla se genera dinamicamente desde JavaScript. Durante la
+        peticion inicial se muestra un mensaje temporal de carga.
+    -->
+    <div class="audit-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Fecha</th>
+                    <th>Evento</th>
+                    <th>Parametro</th>
+                    <th>Cambio aplicado</th>
+                    <th>Impacto</th>
+                    <th>Operario</th>
+                    <th>Origen</th>
+                </tr>
+            </thead>
+            <tbody id="auditBody">
+                <tr>
+                    <td colspan="7" class="muted">Cargando auditoria...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</main>
+
+<script>
+    /*
+     * ============================================================================
+     * LOGICA DE LA VISTA DE AUDITORIA
+     * ============================================================================
+     *
+     * Este bloque JavaScript se encarga de:
+     * - Obtener los registros de configuracion desde la API.
+     * - Mantener una copia local de dichos registros.
+     * - Clasificar los cambios por tipo e impacto.
+     * - Aplicar los filtros seleccionados por el usuario.
+     * - Actualizar los indicadores superiores.
+     * - Generar dinamicamente las filas de la tabla.
+     * - Exportar los resultados visibles a formato CSV.
+     *
+     * La informacion recibida desde el backend no se modifica permanentemente.
+     * Las clasificaciones de evento e impacto se calculan en la interfaz a partir
+     * del nombre del parametro asociado a cada registro.
+     * ============================================================================
+     */
+
+    /*
+     * Determinacion de la URL base de la API.
+     *
+     * Cuando la pagina se ejecuta desde un servidor HTTP o HTTPS, se utiliza el
+     * mismo origen desde el que se ha cargado la aplicacion. Esto evita codificar
+     * una direccion concreta para los entornos desplegados.
+     *
+     * Si el archivo se abre directamente desde el sistema de archivos y no existe
+     * un origen HTTP, se emplea localhost:5000 como direccion de desarrollo.
+     */
+    const API_BASE = window.location.protocol.startsWith('http')
+        ? window.location.origin
+        : 'http://localhost:5000';
+
+    /*
+     * Esta variable actua como cache local de los registros recibidos desde la API.
+     * Mantener los datos en memoria permite ejecutar busquedas y filtros sin enviar
+     * una nueva peticion al servidor cada vez que cambia un control de la interfaz.
+     */
+    let registrosAuditoria = [];
+
+
+    /**
+     * Convierte caracteres especiales de un valor en sus entidades HTML seguras.
+     *
+     * La funcion protege la generacion dinamica de la tabla, ya que los valores
+     * procedentes de la API se insertan posteriormente mediante innerHTML.
+     * Caracteres como "<", ">", comillas o "&" se sustituyen por representaciones
+     * que el navegador interpreta como texto y no como codigo HTML.
+     *
+     * @param {*} value Valor que se desea mostrar dentro de contenido HTML.
+     * @returns {string} Cadena preparada para ser insertada de forma segura.
+     */
+    function escapeHTML(value) {
+        /*
+         * El operador ?? sustituye valores null o undefined por una cadena vacia
+         * antes de realizar la conversion a texto.
+         */
+        return String(value ?? '').replace(/[&<>"']/g, char => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        }[char]));
+    }
+
+
+    /**
+     * Obtiene una descripcion legible del tipo de evento a partir del parametro.
+     *
+     * El backend proporciona el nombre tecnico del parametro modificado. Esta
+     * funcion lo analiza y lo agrupa en una categoria comprensible para el usuario
+     * de la interfaz.
+     *
+     * @param {string} parametro Nombre tecnico del parametro que ha sido modificado.
+     * @returns {string} Categoria descriptiva asociada al cambio.
+     */
+    function tipoEvento(parametro) {
+        /*
+         * Los parametros relacionados con temperatura o humedad corresponden a
+         * modificaciones de los umbrales utilizados por el sistema.
+         */
+        if (parametro.includes('Temp') || parametro.includes('Humedad')) return 'Ajuste de umbral';
+
+        /*
+         * Los parametros que contienen "Intervalo" modifican la frecuencia con la
+         * que se realizan lecturas o procesos de muestreo.
+         */
+        if (parametro.includes('Intervalo')) return 'Cambio de muestreo';
+
+        /*
+         * Los parametros de sensibilidad se presentan como operaciones de
+         * calibracion, al estar relacionados con el ajuste del comportamiento.
+         */
+        if (parametro.includes('Sensibilidad')) return 'Calibracion';
+
+        /* Cualquier parametro no contemplado se clasifica de forma generica. */
+        return 'Configuracion';
+    }
+
+
+    /**
+     * Determina el nivel de impacto asociado a un registro de configuracion.
+     *
+     * El criterio de clasificacion se basa en el nombre del parametro modificado.
+     * Los cambios que pueden afectar directamente a umbrales ambientales se
+     * consideran criticos; los relativos al muestreo o sensibilidad se consideran
+     * operativos; el resto se identifica como informacion general.
+     *
+     * @param {Object} registro Registro de auditoria recibido desde el backend.
+     * @returns {string} Nivel de impacto: "CRITICO", "OPERATIVO" o "INFO".
+     */
+    function impactoCambio(registro) {
+        /*
+         * Si el registro no contiene parametro, se utiliza una cadena vacia para
+         * evitar errores al ejecutar posteriormente el metodo includes().
+         */
+        const parametro = registro.parametro || '';
+
+        if (parametro.includes('Temp') || parametro.includes('Humedad')) return 'CRITICO';
+        if (parametro.includes('Intervalo') || parametro.includes('Sensibilidad')) return 'OPERATIVO';
+
+        return 'INFO';
+    }
+
+
+    /**
+     * Devuelve la clase CSS que debe utilizar una etiqueta segun su impacto.
+     *
+     * La separacion entre clasificacion logica y representacion visual evita
+     * introducir directamente nombres de clases CSS dentro del calculo del impacto.
+     *
+     * @param {string} impacto Nivel de impacto calculado para un registro.
+     * @returns {string} Nombre de la clase CSS que representa visualmente el nivel.
+     */
+    function impactoClass(impacto) {
+        if (impacto === 'CRITICO') return 'impact-critical';
+        if (impacto === 'OPERATIVO') return 'impact-operative';
+
+        /* INFO actua como valor visual por defecto para el resto de casos. */
+        return 'impact-info';
+    }
+
+
+    /**
+     * Aplica los filtros activos sobre los registros almacenados en memoria.
+     *
+     * El filtrado combina dos criterios:
+     * 1. Una busqueda textual sobre diferentes propiedades del registro.
+     * 2. Un filtro exacto por nivel de impacto.
+     *
+     * La funcion no modifica registrosAuditoria. Array.filter() crea y devuelve
+     * un nuevo array con los elementos que cumplen ambas condiciones.
+     *
+     * @returns {Array<Object>} Registros que cumplen los filtros seleccionados.
+     */
+    function registrosFiltrados() {
+        /*
+         * trim() elimina espacios innecesarios al principio y al final.
+         * toLowerCase() permite que la busqueda no distinga entre mayusculas y
+         * minusculas.
+         */
+        const search = document.getElementById('searchInput').value.trim().toLowerCase();
+
+        /* Se recupera el nivel de impacto seleccionado en el desplegable. */
+        const impact = document.getElementById('impactFilter').value;
+
+        return registrosAuditoria.filter(registro => {
+            /*
+             * El impacto se calcula para cada registro porque no forma parte
+             * necesariamente de los datos originales recibidos desde el backend.
+             */
+            const computedImpact = impactoCambio(registro);
+
+            /*
+             * Se construye una unica cadena de busqueda con los principales campos.
+             * Esta tecnica permite localizar un registro escribiendo contenido de
+             * cualquiera de ellos sin realizar una comparacion independiente por
+             * cada propiedad.
+             */
+            const searchable = [
+                registro.fecha_hora,
+                registro.operario,
+                registro.parametro,
+                registro.valor_anterior,
+                registro.valor_nuevo,
+                registro.origen,
+                tipoEvento(registro.parametro),
+                computedImpact
+            ].join(' ').toLowerCase();
+
+            /*
+             * El registro permanece visible cuando:
+             * - No existe texto de busqueda o la cadena construida lo contiene.
+             * - Se muestran todos los impactos o el impacto calculado coincide
+             *   exactamente con el seleccionado.
+             */
+            return (!search || searchable.includes(search))
+                && (impact === 'all' || computedImpact === impact);
+        });
+    }
+
+
+    /**
+     * Actualiza los indicadores superiores utilizando los registros visibles.
+     *
+     * Los KPIs se calculan sobre el resultado filtrado y no sobre el conjunto
+     * completo descargado. De esta forma, el resumen permanece sincronizado con
+     * la informacion que se observa en la tabla.
+     *
+     * @param {Array<Object>} registros Registros actualmente visibles.
+     * @returns {void}
+     */
+    function renderKPIs(registros) {
+        /*
+         * filter() conserva unicamente los registros clasificados como criticos
+         * y length obtiene el numero total de coincidencias.
+         */
+        const critical = registros.filter(registro => impactoCambio(registro) === 'CRITICO').length;
+
+        /*
+         * Se considera que la primera posicion contiene el registro mas reciente,
+         * de acuerdo con el orden proporcionado por la API.
+         */
+        const last = registros[0];
+
+        /* Se actualizan los valores visibles de cada indicador mediante textContent. */
+        document.getElementById('kpiTotal').textContent = registros.length;
+        document.getElementById('kpiCritical').textContent = critical;
+
+        /*
+         * slice(0, 16) limita la fecha mostrada para presentar una version compacta.
+         * El operador ternario evita acceder a propiedades si no existen registros.
+         */
+        document.getElementById('kpiLast').textContent = last ? last.fecha_hora.slice(0, 16) : '--';
+        document.getElementById('kpiOperator').textContent = last ? last.operario : '--';
+    }
+
+
+    /**
+     * Genera y muestra la tabla de auditoria correspondiente a los filtros activos.
+     *
+     * Antes de crear las filas se recalculan los KPIs para que ambos componentes
+     * representen exactamente el mismo conjunto de datos.
+     *
+     * Los valores procedentes de la API se procesan mediante escapeHTML() antes
+     * de insertarse con innerHTML. Esta medida evita que contenido externo pueda
+     * interpretarse como etiquetas o codigo ejecutable.
+     *
+     * @returns {void}
+     */
+    function renderTabla() {
+        /* Se obtiene la referencia al cuerpo de la tabla que se va a actualizar. */
+        const tbody = document.getElementById('auditBody');
+
+        /* Se recupera solamente el subconjunto que cumple los filtros activos. */
+        const registros = registrosFiltrados();
+
+        /* Los indicadores se sincronizan antes de generar las filas. */
+        renderKPIs(registros);
+
+        /*
+         * Cuando no existe ninguna coincidencia se sustituye la tabla por un
+         * mensaje informativo y se detiene la ejecucion de la funcion.
+         */
+        if (!registros.length) {
+            tbody.innerHTML = '<tr><td colspan="7" class="muted">No hay cambios con los filtros actuales.</td></tr>';
+            return;
+        }
+
+        /*
+         * map() transforma cada objeto de auditoria en una fila HTML.
+         * join('') concatena posteriormente todas las filas en una sola cadena,
+         * evitando que aparezcan separadores de array en el contenido generado.
+         */
+        tbody.innerHTML = registros.map(registro => {
+            /* El impacto se calcula una unica vez por fila para reutilizarlo. */
+            const impacto = impactoCambio(registro);
+
+            return `
+                <tr>
+                    <!-- Fecha exacta en la que quedo registrado el cambio. -->
+                    <td class="mono">${escapeHTML(registro.fecha_hora)}</td>
+
+                    <!-- Categoria funcional obtenida a partir del parametro tecnico. -->
+                    <td>${escapeHTML(tipoEvento(registro.parametro))}</td>
+
+                    <!-- Nombre del parametro que sufrio la modificacion. -->
+                    <td class="mono">${escapeHTML(registro.parametro)}</td>
+
+                    <td>
+                        <div class="change-flow mono">
+                            <!-- Se diferencia visualmente el valor sustituido del nuevo. -->
+                            <span class="val-old">${escapeHTML(registro.valor_anterior)}</span>
+                            <span class="muted">-></span>
+                            <span class="val-new">${escapeHTML(registro.valor_nuevo)}</span>
+                        </div>
+                    </td>
+
+                    <!-- La clase visual depende del nivel de impacto calculado. -->
+                    <td><span class="badge-impact ${impactoClass(impacto)}">${impacto}</span></td>
+
+                    <!-- Identifica al usuario u operario que efectuo la modificacion. -->
+                    <td>
+                        <span class="user-badge">
+                            <span class="dot"></span>
+                            ${escapeHTML(registro.operario)}
+                        </span>
+                    </td>
+
+                    <!-- Indica el punto de origen desde el que se realizo el cambio. -->
+                    <td class="muted">${escapeHTML(registro.origen)}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+
+    /**
+     * Solicita al backend el historial de cambios de configuracion.
+     *
+     * La funcion es asincrona porque la peticion HTTP puede tardar en completarse.
+     * Mientras se espera la respuesta, la tabla muestra un mensaje de carga.
+     *
+     * Si la respuesta es correcta, el JSON recibido se almacena en la cache local
+     * y se representa la tabla. Si se produce un error de red o una respuesta HTTP
+     * no satisfactoria, se informa al usuario dentro del propio cuerpo de la tabla.
+     *
+     * @returns {Promise<void>}
+     */
+    async function cargarAuditoria() {
+        const tbody = document.getElementById('auditBody');
+
+        /* Se comunica visualmente que se esta realizando una nueva consulta. */
+        tbody.innerHTML = '<tr><td colspan="7" class="muted">Cargando auditoria...</td></tr>';
+
+        try {
+            /*
+             * await detiene esta funcion hasta recibir la respuesta sin bloquear
+             * el hilo principal del navegador ni impedir otras interacciones.
+             */
+            const response = await fetch(`${API_BASE}/api/log-cambios`);
+
+            /*
+             * fetch() no lanza automaticamente una excepcion ante codigos HTTP como
+             * 404 o 500. Por ello se comprueba explicitamente response.ok.
+             */
+            if (!response.ok) throw new Error('No se pudo cargar la auditoria');
+
+            /*
+             * El cuerpo JSON de la respuesta se convierte a objetos JavaScript y
+             * sustituye la cache local anterior.
+             */
+            registrosAuditoria = await response.json();
+
+            /* Una vez disponibles los datos, se actualizan tabla e indicadores. */
+            renderTabla();
+        } catch (error) {
+            /*
+             * Ante cualquier fallo se evita mantener el mensaje de carga y se
+             * informa de que la auditoria no ha podido recuperarse.
+             */
+            tbody.innerHTML = '<tr><td colspan="7" class="muted">Error cargando la auditoria.</td></tr>';
+        }
+    }
+
+
+    /**
+     * Exporta a formato CSV los registros que cumplen los filtros actuales.
+     *
+     * La funcion genera el archivo completamente en el navegador, por lo que no
+     * requiere una peticion adicional al backend. Los campos se delimitan mediante
+     * comas y cada valor se encierra entre comillas para conservar correctamente
+     * textos que puedan contener separadores.
+     *
+     * @returns {void}
+     */
+    function exportarCSV() {
+        /*
+         * Se exporta exactamente el mismo subconjunto que se muestra en pantalla,
+         * respetando tanto el filtro textual como el nivel de impacto seleccionado.
+         */
+        const rows = registrosFiltrados();
+
+        /* Se cancela la operacion cuando no existe ningun registro exportable. */
+        if (!rows.length) {
+            alert('No hay registros para exportar.');
+            return;
+        }
+
+        /* La primera linea define las columnas que tendra el documento CSV. */
+        const header = 'FECHA,EVENTO,PARAMETRO,VALOR_ANTERIOR,VALOR_NUEVO,IMPACTO,OPERARIO,ORIGEN\n';
+
+        /*
+         * Cada registro se transforma primero en un array de columnas.
+         * El segundo map() prepara cada valor para el formato CSV:
+         * - null y undefined se convierten en cadena vacia.
+         * - Las comillas internas se duplican siguiendo la convencion CSV.
+         * - Cada campo queda rodeado por comillas dobles.
+         *
+         * Finalmente, las columnas se separan por comas y las filas por saltos
+         * de linea.
+         */
+        const body = rows.map(row => [
+            row.fecha_hora,
+            tipoEvento(row.parametro),
+            row.parametro,
+            row.valor_anterior,
+            row.valor_nuevo,
+            impactoCambio(row),
+            row.operario,
+            row.origen
+        ].map(value => `"${String(value ?? '').replaceAll('"', '""')}"`).join(',')).join('\n');
+
+        /*
+         * Se antepone el marcador BOM UTF-8 (\ufeff) para mejorar la interpretacion
+         * de caracteres especiales cuando el archivo se abre en aplicaciones como
+         * Microsoft Excel.
+         */
+        const blob = new Blob(['\ufeff' + header + body], { type: 'text/csv;charset=utf-8;' });
+
+        /*
+         * URL.createObjectURL() crea una direccion temporal que referencia al Blob
+         * almacenado en memoria y que puede utilizarse como destino de descarga.
+         */
+        const url = URL.createObjectURL(blob);
+
+        /* Se crea dinamicamente un enlace invisible que iniciara la descarga. */
+        const link = document.createElement('a');
+        link.href = url;
+
+        /*
+         * El nombre del archivo incorpora la fecha actual en formato AAAA-MM-DD
+         * para facilitar la identificacion de las exportaciones realizadas.
+         */
+        link.download = `SMI_Auditoria_Config_${new Date().toISOString().slice(0, 10)}.csv`;
+
+        /*
+         * El enlace debe incorporarse temporalmente al documento para poder
+         * ejecutar programaticamente el evento de descarga.
+         */
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        /*
+         * La URL temporal se libera cuando deja de ser necesaria para evitar
+         * mantener recursos innecesarios en memoria.
+         */
+        URL.revokeObjectURL(url);
+    }
+
+
+    /*
+     * ============================================================================
+     * REGISTRO DE EVENTOS DE LA INTERFAZ
+     * ============================================================================
+     *
+     * Los filtros vuelven a generar la tabla directamente sobre los datos que ya
+     * se encuentran en memoria. De este modo, el filtrado responde inmediatamente
+     * y no provoca nuevas solicitudes HTTP.
+     */
+
+    /* La tabla se actualiza con cada modificacion introducida en el buscador. */
+    document.getElementById('searchInput').addEventListener('input', renderTabla);
+
+    /* La tabla se actualiza cuando cambia la opcion seleccionada de impacto. */
+    document.getElementById('impactFilter').addEventListener('change', renderTabla);
+
+    /*
+     * Cuando el documento termina de cargarse se solicita automaticamente la
+     * auditoria al backend para mostrar los datos iniciales.
+     */
+    window.addEventListener('load', cargarAuditoria);
+</script>
+<!--
+    Este script externo contiene la logica comun encargada de gestionar el tema
+    visual de la aplicacion y mantener la preferencia seleccionada por el usuario.
+-->
+<script src="theme.js"></script>
+
+</body>
+</html>

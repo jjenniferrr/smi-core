@@ -1,0 +1,1849 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <!--
+        ============================================================================
+        ARCHIVO: configurar-sistema.html
+        DESCRIPCION GENERAL
+        ============================================================================
+
+        Este archivo implementa la vista de configuracion por nodo del sistema
+        S.M.I. CORE.
+
+        Su objetivo principal consiste en permitir la administracion individual de
+        los nodos registrados en la plataforma, incluyendo tanto nodos fisicos como
+        nodos simulados.
+
+        Desde esta pantalla se pueden realizar las siguientes operaciones:
+        - Consultar la lista de nodos disponibles.
+        - Seleccionar un nodo mediante un buscador desplegable.
+        - Consultar y modificar su nombre, tipo, origen y estado.
+        - Definir umbrales independientes de temperatura, humedad y sonido.
+        - Guardar los cambios de configuracion asociados al nodo seleccionado.
+        - Crear nuevos nodos simulados.
+        - Mostrar informacion de auditoria sobre los cambios realizados.
+        - Consultar un diagnostico resumido del estado general del sistema.
+
+        El diagnostico incluye:
+        - Estado de la base de datos.
+        - Numero de nodos simulados.
+        - Estado de conexion del Arduino.
+        - Numero de registros almacenados.
+
+        La vista mantiene una separacion entre los SELECT nativos, que conservan el
+        valor real utilizado por los formularios, y los componentes visuales
+        personalizados que se muestran al usuario.
+
+        FLUJO GENERAL DE FUNCIONAMIENTO
+        --------------------------------
+        1. Al abrir la pagina se inicializa el buscador de nodos.
+        2. Se inicializan los desplegables personalizados de origen y estado.
+        3. Se solicita al backend la lista completa de nodos.
+        4. Al seleccionar un nodo se cargan sus propiedades y umbrales.
+        5. El administrador puede modificar los parametros y guardar los cambios.
+        6. El backend devuelve informacion sobre los cambios auditados.
+        7. Tambien puede crearse un nuevo nodo simulado desde el formulario lateral.
+        8. El diagnostico del sistema se consulta al cargar la pagina.
+        9. Posteriormente se refresca de forma automatica cada diez segundos.
+
+        La persistencia de datos, la validacion definitiva de los parametros y el
+        registro de auditoria corresponden al backend. Esta vista actua como
+        interfaz de administracion y representacion de dicha informacion.
+        ============================================================================
+    -->
+    <!-- Define la codificacion de caracteres utilizada por el documento. -->
+    <meta charset="UTF-8">
+
+    <!-- Permite adaptar correctamente la interfaz a dispositivos moviles. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Titulo mostrado en la pestana del navegador. -->
+    <title>S.M.I. CORE | Configuracion de Nodos</title>
+
+    <!--
+        Se cargan las tipografias utilizadas en la interfaz.
+        Inter se utiliza para textos generales y JetBrains Mono para valores y datos
+        de caracter tecnico.
+    -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+
+    <!-- Bootstrap aporta el sistema de rejilla utilizado por los formularios. -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!--
+        Se aplica el tema guardado antes de representar completamente la pagina.
+        Si no existe ninguna preferencia se utiliza el tema oscuro.
+    -->
+    <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('smi-theme') || 'dark');</script>
+
+    <!-- Hoja de estilos compartida con el resto de pantallas de S.M.I. CORE. -->
+    <link href="theme.css" rel="stylesheet">
+
+    <style>
+        /*
+         * =========================================================================
+         * VARIABLES GLOBALES DE ESTILO
+         * =========================================================================
+         * Se centralizan los colores principales para facilitar su reutilizacion.
+         */
+        :root {
+            --bg-main: #0d1117;
+            --panel-bg: #161b22;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --border: #30363d;
+            --text-main: #e6edf3;
+            --text-dim: #7d8590;
+        }
+
+        /*
+         * =========================================================================
+         * CONFIGURACION GENERAL DE LA PAGINA
+         * =========================================================================
+         * La vista utiliza una distribucion horizontal con menu lateral fijo y
+         * contenido principal desplazable.
+         */
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+        *, *::before, *::after { box-sizing: border-box; }
+        .text-muted { color: #9aa4b2 !important; }
+
+        /*
+         * =========================================================================
+         * MENU LATERAL
+         * =========================================================================
+         * Permanece fijo en escritorio para mantener accesible la navegacion.
+         */
+        .sidebar {
+            width: 260px;
+            height: 100vh;
+            background: var(--panel-bg);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 30px 20px;
+            position: fixed;
+        }
+
+        .logo-box { margin-bottom: 40px; padding-left: 10px; }
+        .nav-list { flex-grow: 1; }
+
+        .nav-item {
+            padding: 10px 14px;
+            color: var(--text-dim);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            border-radius: 6px;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+
+        .nav-item:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-main); }
+        .nav-item.active {
+            background: rgba(88, 166, 255, 0.1);
+            color: var(--accent-blue);
+            border: 1px solid rgba(88, 166, 255, 0.2);
+        }
+
+        .sidebar-divider { height: 1px; background: var(--border); margin: 15px 0; }
+        .sidebar-label {
+            color: var(--text-dim);
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding-left: 14px;
+            margin-bottom: 10px;
+            display: block;
+        }
+
+        /*
+         * =========================================================================
+         * CONTENIDO PRINCIPAL
+         * =========================================================================
+         * El margen izquierdo compensa la anchura del menu lateral.
+         */
+        .main-content {
+            margin-left: 260px;
+            padding: 40px;
+            flex-grow: 1;
+            overflow-y: auto;
+        }
+
+        .section-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--text-main);
+            margin-bottom: 5px;
+        }
+
+        /*
+         * =========================================================================
+         * DISTRIBUCION PRINCIPAL
+         * =========================================================================
+         * La configuracion del nodo y el formulario de alta se muestran en dos
+         * columnas en pantallas amplias.
+         */
+        .layout-grid {
+            display: grid;
+            grid-template-columns: minmax(360px, 1.2fr) minmax(320px, 0.8fr);
+            gap: 24px;
+            margin-top: 26px;
+        }
+
+        /*
+         * Los paneles encapsulan visualmente cada bloque funcional.
+         */
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 24px;
+        }
+
+        .panel-title {
+            font-weight: 700;
+            margin-bottom: 18px;
+        }
+
+        .form-label-custom {
+            color: var(--text-dim);
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        .input-factory {
+            background: #0d1117;
+            border: 1px solid var(--border);
+            color: white;
+            padding: 11px 13px;
+            border-radius: 6px;
+            width: 100%;
+            margin-bottom: 18px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+        }
+
+        /*
+         * Los SELECT nativos conservan el valor real de los formularios aunque se
+         * ocultan porque JavaScript genera una interfaz visual personalizada.
+         */
+        .hidden-native-select {
+            display: none;
+        }
+
+        /*
+         * =========================================================================
+         * SELECTOR DE NODOS CON BUSQUEDA
+         * =========================================================================
+         * Permite localizar un nodo escribiendo parte de su identificador.
+         */
+        .search-select {
+            position: relative;
+            margin-bottom: 18px;
+        }
+
+        .search-select-input {
+            width: 100%;
+            min-height: 44px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: #0d1117;
+            color: var(--text-main);
+            padding: 0 38px 0 12px;
+            font-size: 13px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .search-select::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            right: 14px;
+            width: 9px;
+            height: 9px;
+            border-right: 2px solid #a7b7ca;
+            border-bottom: 2px solid #a7b7ca;
+            transform: translateY(-65%) rotate(45deg);
+            pointer-events: none;
+            transition: transform 0.2s ease;
+        }
+
+        .search-select.open::after {
+            transform: translateY(-35%) rotate(225deg);
+        }
+
+        .search-select-menu {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            right: 0;
+            z-index: 150;
+            display: none;
+            background: #11161d;
+            border: 1px solid #30363d;
+            border-radius: 14px;
+            padding: 8px;
+            box-shadow: 0 18px 36px rgba(0,0,0,0.36);
+            max-height: 320px;
+            overflow-y: auto;
+        }
+
+        .search-select.open .search-select-menu {
+            display: block;
+        }
+
+        .search-select-option {
+            width: 100%;
+            border: none;
+            background: transparent;
+            color: #dce6f2;
+            border-radius: 10px;
+            padding: 11px 12px;
+            text-align: left;
+            font-size: 13px;
+            font-weight: 600;
+            transition: background 0.18s ease, color 0.18s ease;
+        }
+
+        .search-select-option:hover {
+            background: rgba(88, 166, 255, 0.1);
+            color: #ffffff;
+        }
+
+        .search-select-option.active {
+            background: linear-gradient(180deg, rgba(47,129,247,0.96) 0%, rgba(31,111,235,0.96) 100%);
+            color: #ffffff;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+        }
+
+        .search-select-empty {
+            padding: 10px 12px;
+            color: var(--text-dim);
+            font-size: 12px;
+        }
+
+        /*
+         * =========================================================================
+         * SELECTORES PERSONALIZADOS DE OPCIONES
+         * =========================================================================
+         * Se utilizan para origen de datos y estado del nodo.
+         */
+        .option-select {
+            position: relative;
+            margin-bottom: 18px;
+        }
+
+        .option-select-button {
+            width: 100%;
+            min-height: 48px;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: #0d1117;
+            color: var(--text-main);
+            padding: 0 38px 0 12px;
+            font-size: 13px;
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+            text-align: left;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+        }
+
+        .option-select-button:hover {
+            border-color: #4b5563;
+        }
+
+        .option-select-button:focus {
+            outline: none;
+            border-color: rgba(88, 166, 255, 0.55);
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.12);
+        }
+
+        .option-select::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            right: 14px;
+            width: 9px;
+            height: 9px;
+            border-right: 2px solid #a7b7ca;
+            border-bottom: 2px solid #a7b7ca;
+            transform: translateY(-65%) rotate(45deg);
+            pointer-events: none;
+            transition: transform 0.2s ease;
+        }
+
+        .option-select.open::after {
+            transform: translateY(-35%) rotate(225deg);
+        }
+
+        .option-select-menu {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            right: 0;
+            z-index: 150;
+            display: none;
+            background: #11161d;
+            border: 1px solid #30363d;
+            border-radius: 14px;
+            padding: 8px;
+            box-shadow: 0 18px 36px rgba(0,0,0,0.36);
+        }
+
+        .option-select.open .option-select-menu {
+            display: block;
+        }
+
+        .option-select-item {
+            width: 100%;
+            border: none;
+            background: transparent;
+            color: #dce6f2;
+            border-radius: 10px;
+            padding: 11px 12px;
+            text-align: left;
+            font-size: 13px;
+            font-weight: 600;
+            transition: background 0.18s ease, color 0.18s ease;
+        }
+
+        .option-select-item:hover {
+            background: rgba(88, 166, 255, 0.1);
+            color: #ffffff;
+        }
+
+        .option-select-item.active {
+            background: linear-gradient(180deg, rgba(47,129,247,0.96) 0%, rgba(31,111,235,0.96) 100%);
+            color: #ffffff;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+        }
+
+        :root[data-theme="light"] .search-select-input {
+            background: #ffffff;
+            color: #0f172a;
+            border-color: #c9d4e5;
+        }
+
+        :root[data-theme="light"] .search-select-menu {
+            background: #ffffff;
+            border-color: #d5e1ee;
+            box-shadow: 0 16px 30px rgba(20,33,51,0.14);
+        }
+
+        :root[data-theme="light"] .search-select-option {
+            color: #142133;
+        }
+
+        :root[data-theme="light"] .search-select-option:hover {
+            background: rgba(31,102,209,0.08);
+            color: #142133;
+        }
+
+        :root[data-theme="light"] .option-select-button {
+            background: #ffffff;
+            color: #0f172a;
+            border-color: #c9d4e5;
+        }
+
+        :root[data-theme="light"] .option-select-menu {
+            background: #ffffff;
+            border-color: #d5e1ee;
+            box-shadow: 0 16px 30px rgba(20,33,51,0.14);
+        }
+
+        :root[data-theme="light"] .option-select-item {
+            color: #142133;
+        }
+
+        :root[data-theme="light"] .option-select-item:hover {
+            background: rgba(31,102,209,0.08);
+            color: #142133;
+        }
+
+        /*
+         * =========================================================================
+         * BOTONES DE ACCION
+         * =========================================================================
+         * El boton principal guarda la configuracion del nodo seleccionado.
+         */
+        .btn-save-settings {
+            background: var(--accent-blue);
+            color: #0d1117;
+            border: none;
+            padding: 11px 16px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 13px;
+            width: 100%;
+        }
+
+        .btn-secondary-custom {
+            background: #21262d;
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            padding: 11px 16px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 13px;
+            width: 100%;
+        }
+
+        /*
+         * Rejilla auxiliar reservada para metadatos asociados al nodo.
+         */
+        .node-meta {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 18px;
+        }
+
+        .save-status {
+            min-height: 20px;
+            color: var(--accent-green);
+            font-size: 12px;
+            margin-top: 14px;
+            text-align: center;
+        }
+
+        /*
+         * =========================================================================
+         * DIAGNOSTICO DEL SISTEMA
+         * =========================================================================
+         * Los indicadores se distribuyen en cuatro columnas en escritorio.
+         */
+        .diagnostic-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(150px, 1fr));
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        .diagnostic-item {
+            background: #0d1117;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 12px;
+        }
+
+        .diagnostic-label {
+            color: var(--text-dim);
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+
+        .diagnostic-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            font-weight: 700;
+            overflow-wrap: anywhere;
+        }
+
+        /*
+         * =========================================================================
+         * DISENO RESPONSIVE PARA TABLETS
+         * =========================================================================
+         * El menu pasa a la parte superior y los paneles se muestran en una columna.
+         */
+        @media (max-width: 980px) {
+            body { display: block; height: auto; overflow: auto; }
+            .sidebar {
+                position: static;
+                width: 100%;
+                max-width: 100%;
+                height: auto;
+                padding: 18px;
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+            }
+            .logo-box { margin-bottom: 18px; padding-left: 0; }
+            .nav-list, .sidebar-footer {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 8px;
+            }
+            .nav-item { margin-bottom: 0; min-height: 42px; }
+            .main-content { margin-left: 0; padding: 24px; }
+            .layout-grid { grid-template-columns: 1fr; }
+            .diagnostic-grid { grid-template-columns: 1fr; }
+        }
+
+        /*
+         * =========================================================================
+         * DISENO RESPONSIVE PARA MOVILES
+         * =========================================================================
+         * Se reducen margenes y se simplifica la distribucion para pantallas
+         * estrechas.
+         */
+        @media (max-width: 560px) {
+            .main-content { padding: 18px 14px; }
+            .sidebar { position: sticky; top: 0; z-index: 1000; padding: 12px; }
+            .logo-box { margin-bottom: 10px; }
+            .nav-list, .sidebar-footer {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
+                overflow-x: hidden;
+                gap: 8px;
+                padding-bottom: 4px;
+                scrollbar-width: none;
+            }
+            .nav-list::-webkit-scrollbar, .sidebar-footer::-webkit-scrollbar { display: none; }
+            .sidebar-footer { margin-top: 8px; }
+            .sidebar-footer > div, .sidebar-label { display: none; }
+            .nav-item { min-width: 0; min-height: 36px; white-space: normal; overflow-wrap: anywhere; justify-content: center; text-align: center; padding: 8px 12px; font-size: 13px; }
+            .panel { padding: 18px; }
+            .node-meta { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+<!--
+    ============================================================================
+    NAVEGACION PRINCIPAL
+    ============================================================================
+    La barra lateral proporciona acceso a los distintos modulos del sistema. La
+    opcion Configurar Sistema aparece marcada como activa.
+-->
+<nav class="sidebar">
+    <div class="logo-box">
+        <h5 class="text-white fw-bold mb-0">S.M.I. <span style="color:var(--accent-blue)">CORE</span></h5>
+        <small class="text-muted" style="font-size: 10px; font-family: 'JetBrains Mono';">VER. 2.6.0-STABLE</small>
+    </div>
+
+        <div class="nav-list">
+        <a href="index.html" class="nav-item">Dashboard Vivo</a>
+        <a href="mapa.html" class="nav-item">Mapa de Planta</a>
+        <a href="mantenimiento.html" class="nav-item">Analisis por Zonas</a>
+        <a href="historial.html" class="nav-item">Historial de Datos</a>
+        <a href="reportes.html" class="nav-item">Reportes</a>
+    </div>
+    <div class="sidebar-footer">
+        <div class="sidebar-divider"></div>
+        <small class="sidebar-label">Administracion</small>
+        <a href="configurar-sistema.html" class="nav-item active">Configurar Sistema</a>
+        <a href="historial-configuracion.html" class="nav-item">Registro Config.</a>
+    </div>
+</nav>
+
+<!--
+    ============================================================================
+    CONTENIDO PRINCIPAL DE CONFIGURACION
+    ============================================================================
+-->
+<main class="main-content">
+
+    <!-- Encabezado descriptivo de la vista. -->
+    <div>
+        <h4 class="section-title">Configuracion por Nodo</h4>
+        <p class="text-muted small m-0">Define umbrales independientes para cada zona y crea nuevos nodos simulados.</p>
+    </div>
+
+    <div class="layout-grid">
+        <!--
+            PANEL DE CONFIGURACION DEL NODO
+            Permite seleccionar un nodo y modificar sus propiedades y umbrales.
+        -->
+        <section class="panel">
+            <h6 class="panel-title">Parametros del nodo</h6>
+
+            <label class="form-label-custom">Nodo</label>
+            <!--
+                El SELECT nativo conserva el identificador real seleccionado.
+                El componente search-select situado a continuacion proporciona la
+                interfaz visible con capacidad de busqueda.
+            -->
+            <select class="hidden-native-select" id="nodeSelect"></select>
+            <div class="search-select" id="nodeSelectSearch" data-select-id="nodeSelect" data-placeholder="Buscar nodo..."></div>
+
+            <!--
+                FORMULARIO DE CONFIGURACION
+                Los valores se rellenan dinamicamente al seleccionar un nodo.
+            -->
+            <form id="nodeConfigForm">
+                <div class="row">
+                    <div class="col-md-6">
+                        <label class="form-label-custom">Nombre visible</label>
+                        <input type="text" class="input-factory" id="nodeName">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label-custom">Tipo / Zona</label>
+                        <input type="text" class="input-factory" id="nodeType">
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <label class="form-label-custom">Origen de datos</label>
+                        <select class="hidden-native-select" id="nodeOrigin">
+                            <option value="SIMULADO">SIMULADO</option>
+                            <option value="FISICO">FISICO</option>
+                        </select>
+                        <div class="option-select" data-select-id="nodeOrigin"></div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label-custom">Estado</label>
+                        <select class="hidden-native-select" id="nodeActive">
+                            <option value="1">ACTIVO</option>
+                            <option value="0">INACTIVO</option>
+                        </select>
+                        <div class="option-select" data-select-id="nodeActive"></div>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <label class="form-label-custom">Temperatura Max. C</label>
+                        <input type="number" class="input-factory" id="nodeTempMax" step="0.1">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label-custom">Sonido Max.</label>
+                        <input type="number" class="input-factory" id="nodeSoundMax" step="0.1">
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <label class="form-label-custom">Humedad Min. %</label>
+                        <input type="number" class="input-factory" id="nodeHumMin" step="0.1">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label-custom">Humedad Max. %</label>
+                        <input type="number" class="input-factory" id="nodeHumMax" step="0.1">
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-save-settings">GUARDAR CONFIGURACION DEL NODO</button>
+                <div class="save-status" id="nodeSaveStatus"></div>
+            </form>
+        </section>
+
+        <!--
+            PANEL DE CREACION DE NODOS
+            Permite registrar nuevos nodos de origen simulado.
+        -->
+        <section class="panel">
+            <h6 class="panel-title">Nuevo nodo simulado</h6>
+
+            <form id="newNodeForm">
+                <label class="form-label-custom">Identificador</label>
+                <input type="text" class="input-factory" id="newNodeId" placeholder="SIM_ZONA_ENVASADO">
+
+                <label class="form-label-custom">Nombre visible</label>
+                <input type="text" class="input-factory" id="newNodeName" placeholder="Zona de Envasado">
+
+                <label class="form-label-custom">Tipo</label>
+                <input type="text" class="input-factory" id="newNodeType" placeholder="Produccion">
+
+                <button type="submit" class="btn-secondary-custom">ANADIR NODO SIMULADO</button>
+                <div class="save-status" id="newNodeStatus"></div>
+            </form>
+        </section>
+    </div>
+
+    <!--
+        ============================================================================
+        DIAGNOSTICO DEL SISTEMA
+        ============================================================================
+        Resume el estado de los componentes principales y se actualiza
+        periodicamente mediante JavaScript.
+    -->
+    <section class="panel" style="margin-top: 24px;">
+        <h6 class="panel-title">Diagnostico del sistema</h6>
+        <div class="diagnostic-grid">
+            <div class="diagnostic-item">
+                <div class="diagnostic-label">Base de datos</div>
+                <div class="diagnostic-value" id="diagDb">--</div>
+            </div>
+            <div class="diagnostic-item">
+                <div class="diagnostic-label">Simulador</div>
+                <div class="diagnostic-value" id="diagSim">--</div>
+            </div>
+            <div class="diagnostic-item">
+                <div class="diagnostic-label">Arduino</div>
+                <div class="diagnostic-value" id="diagArduino">--</div>
+            </div>
+            <div class="diagnostic-item">
+                <div class="diagnostic-label">Almacenamiento</div>
+                <div class="diagnostic-value" id="diagStorage">--</div>
+            </div>
+        </div>
+    </section>
+</main>
+
+<script>
+    /*
+     * ============================================================================
+     * LOGICA DE CONFIGURACION DE NODOS
+     * ============================================================================
+     *
+     * Este bloque JavaScript gestiona:
+     * - La descarga de la lista de nodos.
+     * - La seleccion de un nodo mediante un buscador personalizado.
+     * - La carga de sus propiedades y umbrales en el formulario.
+     * - La modificacion de su configuracion.
+     * - La creacion de nuevos nodos simulados.
+     * - La representacion de mensajes de estado.
+     * - La consulta periodica del diagnostico general del sistema.
+     * ============================================================================
+     */
+
+
+    /*
+     * URL BASE DE LA API.
+     *
+     * Si la pagina se ejecuta mediante HTTP o HTTPS se reutiliza el origen actual.
+     * Si se abre directamente como archivo local se utiliza localhost:5000.
+     */
+    const API_BASE = window.location.protocol.startsWith('http')
+        ? window.location.origin
+        : 'http://localhost:5000';
+
+
+    /*
+     * Array que almacena temporalmente los nodos descargados desde el backend.
+     */
+    let nodes = [];
+
+
+    /*
+     * Referencia al SELECT nativo que conserva el identificador del nodo elegido.
+     */
+    const nodeSelect =
+        document.getElementById('nodeSelect');
+
+
+    /*
+     * Objeto que centraliza las referencias a los campos del formulario.
+     *
+     * Esta agrupacion evita repetir llamadas a document.getElementById() cada vez
+     * que se necesita leer o modificar una propiedad del nodo.
+     */
+    const fields = {
+        nombre:
+            document.getElementById('nodeName'),
+
+        tipo:
+            document.getElementById('nodeType'),
+
+        origen:
+            document.getElementById('nodeOrigin'),
+
+        activo:
+            document.getElementById('nodeActive'),
+
+        umbral_temp_max:
+            document.getElementById('nodeTempMax'),
+
+        umbral_humedad_min:
+            document.getElementById('nodeHumMin'),
+
+        umbral_humedad_max:
+            document.getElementById('nodeHumMax'),
+
+        umbral_sonido_max:
+            document.getElementById('nodeSoundMax')
+    };
+
+
+    /**
+     * Restablece el formulario de configuracion a sus valores iniciales.
+     *
+     * Se utiliza cuando no existe ningun nodo seleccionado o cuando el buscador
+     * deja de contener una opcion valida.
+     *
+     * @returns {void}
+     */
+    function clearNodeForm() {
+        /* Los campos de texto y umbrales quedan vacios. */
+        fields.nombre.value = '';
+        fields.tipo.value = '';
+
+        /*
+         * Se establecen valores predeterminados para origen y estado.
+         */
+        fields.origen.value = 'SIMULADO';
+        fields.activo.value = '1';
+
+        fields.umbral_temp_max.value = '';
+        fields.umbral_humedad_min.value = '';
+        fields.umbral_humedad_max.value = '';
+        fields.umbral_sonido_max.value = '';
+
+        /*
+         * Como origen y estado se representan mediante selectores personalizados,
+         * se solicita que estos componentes sincronicen nuevamente su texto.
+         *
+         * El operador ?. evita errores si refreshOptions no estuviera definido.
+         */
+        document
+            .querySelectorAll('.option-select')
+            .forEach(
+                wrapper =>
+                    wrapper.refreshOptions?.()
+            );
+    }
+
+
+    /**
+     * Muestra un mensaje de estado bajo uno de los formularios.
+     *
+     * La funcion se utiliza tanto para confirmar operaciones correctas como para
+     * informar de errores.
+     *
+     * @param {string} id Identificador del elemento que mostrara el mensaje.
+     * @param {string} message Texto que debe presentarse.
+     * @param {boolean} isError Indica si el mensaje representa un error.
+     * @returns {void}
+     */
+    function setStatus(
+        id,
+        message,
+        isError = false
+    ) {
+        const target =
+            document.getElementById(id);
+
+        /* textContent inserta el mensaje como texto y no como HTML. */
+        target.textContent = message;
+
+        /*
+         * El color se adapta al resultado de la operacion.
+         */
+        target.style.color =
+            isError
+                ? 'var(--accent-red)'
+                : 'var(--accent-green)';
+    }
+
+
+    /**
+     * Devuelve el objeto correspondiente al nodo actualmente seleccionado.
+     *
+     * Array.find() recorre la lista hasta localizar el nodo cuyo identificador
+     * coincide con el valor almacenado en el SELECT principal.
+     *
+     * @returns {Object|undefined} Nodo seleccionado o undefined si no existe.
+     */
+    function selectedNode() {
+        return nodes.find(
+            node =>
+                node.nodo_id === nodeSelect.value
+        );
+    }
+
+
+    /**
+     * Inicializa el buscador visual asociado al SELECT de nodos.
+     *
+     * El SELECT nativo permanece oculto y conserva el valor real. El usuario
+     * interactua con un INPUT que permite filtrar las opciones disponibles.
+     *
+     * @param {HTMLElement} wrapper Contenedor utilizado para crear el componente.
+     * @returns {void}
+     */
+    function initSearchSelect(wrapper) {
+        /*
+         * data-select-id identifica el SELECT nativo relacionado con el buscador.
+         */
+        const selectId =
+            wrapper.dataset.selectId;
+
+        /*
+         * El placeholder puede definirse mediante un atributo data personalizado.
+         */
+        const placeholder =
+            wrapper.dataset.placeholder || 'Seleccionar';
+
+        const nativeSelect =
+            document.getElementById(selectId);
+
+        /*
+         * Se construye la interfaz visible del selector.
+         */
+        wrapper.innerHTML = `
+            <input
+                type="text"
+                class="search-select-input"
+                autocomplete="off"
+                placeholder="${placeholder}">
+            <div class="search-select-menu"></div>
+        `;
+
+        const input =
+            wrapper.querySelector('.search-select-input');
+
+        const menu =
+            wrapper.querySelector('.search-select-menu');
+
+        /*
+         * Se comprueba si existe una opcion vacia, utilizada para representar la
+         * ausencia de nodo seleccionado.
+         */
+        const hasEmptyOption =
+            Array.from(nativeSelect.options)
+                .some(
+                    option =>
+                        option.value === ''
+                );
+
+
+        /**
+         * Sincroniza el contenido del INPUT con la opcion seleccionada.
+         *
+         * @returns {void}
+         */
+        function syncInput() {
+            const selected =
+                nativeSelect.options[
+                    nativeSelect.selectedIndex
+                ];
+
+            /*
+             * Si la opcion activa es la opcion vacia, el campo tambien queda vacio.
+             */
+            input.value =
+                selected && selected.value !== ''
+                    ? selected.text
+                    : '';
+        }
+
+
+        /**
+         * Genera las opciones visibles filtradas por el texto introducido.
+         *
+         * @param {string} filter Texto de busqueda.
+         * @returns {void}
+         */
+        function renderOptions(filter = '') {
+            /*
+             * Se normaliza la busqueda eliminando espacios externos y convirtiendo
+             * el texto a minusculas.
+             */
+            const normalized =
+                filter.trim().toLowerCase();
+
+            /*
+             * Se excluye la opcion vacia y se conservan unicamente los nodos cuyo
+             * texto contiene el filtro introducido.
+             */
+            const options =
+                Array.from(nativeSelect.options)
+                    .filter(
+                        option =>
+                            option.value !== ''
+                            && option.text
+                                .toLowerCase()
+                                .includes(normalized)
+                    );
+
+            /*
+             * Cuando no existen coincidencias se muestra un mensaje informativo.
+             */
+            if (!options.length) {
+                menu.innerHTML =
+                    '<div class="search-select-empty">No hay coincidencias</div>';
+                return;
+            }
+
+            /*
+             * Cada OPTION se transforma en un boton del menu visual.
+             */
+            menu.innerHTML =
+                options.map(option => `
+                    <button
+                        type="button"
+                        class="search-select-option ${option.value === nativeSelect.value ? 'active' : ''}"
+                        data-value="${option.value}">
+                        ${option.text}
+                    </button>
+                `).join('');
+
+            /*
+             * Los botones acaban de generarse mediante innerHTML, por lo que sus
+             * listeners se registran despues de cada renderizado.
+             */
+            menu
+                .querySelectorAll('.search-select-option')
+                .forEach(button => {
+                    button.addEventListener('click', () => {
+                        /*
+                         * data-value contiene el identificador real del nodo.
+                         */
+                        nativeSelect.value =
+                            button.dataset.value;
+
+                        /* El INPUT muestra la etiqueta de la opcion elegida. */
+                        input.value =
+                            button.textContent.trim();
+
+                        /* Se cierra el desplegable. */
+                        wrapper.classList.remove('open');
+
+                        /*
+                         * Tras cambiar de nodo se cargan inmediatamente sus datos.
+                         */
+                        renderSelectedNode();
+                    });
+                });
+        }
+
+
+        /*
+         * Al recibir el foco se abre el menu y se muestran las opciones compatibles
+         * con el texto actual.
+         */
+        input.addEventListener('focus', () => {
+            wrapper.classList.add('open');
+            renderOptions(input.value);
+        });
+
+
+        /*
+         * Cada cambio de texto vuelve a filtrar las opciones disponibles.
+         */
+        input.addEventListener('input', () => {
+            if (
+                hasEmptyOption
+                && !input.value.trim()
+            ) {
+                /*
+                 * Si el buscador queda vacio se elimina la seleccion actual.
+                 */
+                nativeSelect.value = '';
+
+                /*
+                 * Tambien se limpia el formulario porque ya no existe un nodo
+                 * seleccionado.
+                 */
+                clearNodeForm();
+            }
+
+            wrapper.classList.add('open');
+            renderOptions(input.value);
+        });
+
+
+        /*
+         * Al pulsar fuera del componente se cierra el menu.
+         */
+        document.addEventListener('click', event => {
+            if (!wrapper.contains(event.target)) {
+
+                if (
+                    hasEmptyOption
+                    && !input.value.trim()
+                ) {
+                    nativeSelect.value = '';
+                    clearNodeForm();
+                }
+
+                wrapper.classList.remove('open');
+
+                /*
+                 * Se restaura el texto correspondiente al valor real del SELECT.
+                 */
+                syncInput();
+            }
+        });
+
+
+        /*
+         * Se incorpora una funcion de refresco al propio componente.
+         *
+         * loadNodes() la utiliza despues de modificar dinamicamente las opciones del
+         * SELECT.
+         */
+        wrapper.refreshOptions = () => {
+            syncInput();
+            renderOptions(input.value);
+        };
+
+        /* Sincronizacion inicial. */
+        syncInput();
+    }
+
+
+    /**
+     * Inicializa un desplegable personalizado para un SELECT de opciones cortas.
+     *
+     * Se utiliza para los campos origen y estado. El SELECT nativo conserva el
+     * valor real mientras el usuario interactua con botones personalizados.
+     *
+     * @param {HTMLElement} wrapper Contenedor del componente.
+     * @returns {void}
+     */
+    function initOptionSelect(wrapper) {
+        const selectId =
+            wrapper.dataset.selectId;
+
+        const nativeSelect =
+            document.getElementById(selectId);
+
+        /*
+         * Si no se localiza el SELECT asociado se cancela la inicializacion.
+         */
+        if (!nativeSelect) {
+            return;
+        }
+
+        /*
+         * Se generan el boton visible y el menu de opciones.
+         */
+        wrapper.innerHTML = `
+            <button
+                type="button"
+                class="option-select-button">
+            </button>
+
+            <div class="option-select-menu"></div>
+        `;
+
+        const button =
+            wrapper.querySelector('.option-select-button');
+
+        const menu =
+            wrapper.querySelector('.option-select-menu');
+
+
+        /**
+         * Sincroniza el texto del boton con la opcion seleccionada.
+         *
+         * @returns {void}
+         */
+        function syncButton() {
+            const selected =
+                nativeSelect.options[
+                    nativeSelect.selectedIndex
+                ];
+
+            button.textContent =
+                selected
+                    ? selected.text
+                    : 'Seleccionar';
+        }
+
+
+        /**
+         * Regenera las opciones visibles del selector personalizado.
+         *
+         * @returns {void}
+         */
+        function renderOptions() {
+            const options =
+                Array.from(nativeSelect.options);
+
+            /*
+             * La opcion cuyo indice coincide con selectedIndex recibe la clase
+             * "active".
+             */
+            menu.innerHTML =
+                options.map((option, index) => `
+                    <button
+                        type="button"
+                        class="option-select-item ${index === nativeSelect.selectedIndex ? 'active' : ''}"
+                        data-index="${index}">
+                        ${option.text}
+                    </button>
+                `).join('');
+
+            menu
+                .querySelectorAll('.option-select-item')
+                .forEach(item => {
+                    item.addEventListener('click', () => {
+                        /*
+                         * dataset.index se almacena como texto, por lo que se
+                         * convierte a numero antes de modificar selectedIndex.
+                         */
+                        nativeSelect.selectedIndex =
+                            Number(item.dataset.index);
+
+                        /*
+                         * Se dispara manualmente change para conservar el
+                         * comportamiento de un SELECT tradicional.
+                         */
+                        nativeSelect.dispatchEvent(
+                            new Event(
+                                'change',
+                                { bubbles: true }
+                            )
+                        );
+
+                        syncButton();
+                        renderOptions();
+
+                        wrapper.classList.remove('open');
+                    });
+                });
+        }
+
+
+        /*
+         * El boton alterna el estado abierto/cerrado del desplegable.
+         */
+        button.addEventListener('click', event => {
+            /*
+             * Se evita que este click llegue al listener global y cierre
+             * inmediatamente el componente.
+             */
+            event.stopPropagation();
+
+            wrapper.classList.toggle('open');
+
+            renderOptions();
+        });
+
+
+        /*
+         * Al pulsar fuera del selector se cierra el menu.
+         */
+        document.addEventListener('click', event => {
+            if (!wrapper.contains(event.target)) {
+                wrapper.classList.remove('open');
+            }
+        });
+
+
+        /*
+         * Esta funcion permite volver a sincronizar el selector desde otras partes
+         * del codigo.
+         */
+        wrapper.refreshOptions = () => {
+            syncButton();
+            renderOptions();
+        };
+
+        syncButton();
+        renderOptions();
+    }
+
+
+    /**
+     * Carga en el formulario los datos del nodo actualmente seleccionado.
+     *
+     * Si no existe un nodo valido, el formulario se limpia. En caso contrario se
+     * copian sus propiedades generales y los umbrales contenidos en node.config.
+     *
+     * @returns {void}
+     */
+    function renderSelectedNode() {
+        const node = selectedNode();
+
+        /*
+         * Cuando no existe una seleccion valida no se intenta acceder a sus
+         * propiedades.
+         */
+        if (!node) {
+            clearNodeForm();
+            return;
+        }
+
+        /*
+         * El operador ?? utiliza el valor alternativo solamente cuando la propiedad
+         * es null o undefined.
+         */
+        fields.nombre.value =
+            node.nombre ?? '';
+
+        fields.tipo.value =
+            node.tipo ?? '';
+
+        fields.origen.value =
+            node.origen ?? 'SIMULADO';
+
+        /*
+         * El estado booleano o numerico se transforma en los valores esperados por
+         * el SELECT: "1" para activo y "0" para inactivo.
+         */
+        fields.activo.value =
+            node.activo ? '1' : '0';
+
+        /*
+         * Se agrupan los cuatro umbrales para cargarlos mediante una unica
+         * iteracion.
+         */
+        Object.entries({
+            umbral_temp_max:
+                fields.umbral_temp_max,
+
+            umbral_humedad_min:
+                fields.umbral_humedad_min,
+
+            umbral_humedad_max:
+                fields.umbral_humedad_max,
+
+            umbral_sonido_max:
+                fields.umbral_sonido_max
+
+        }).forEach(([key, input]) => {
+            /*
+             * Cada propiedad se obtiene del objeto config asociado al nodo.
+             */
+            input.value =
+                node.config[key] ?? '';
+        });
+
+        /*
+         * Los selectores visuales de origen y estado se actualizan para reflejar los
+         * nuevos valores establecidos en sus SELECT nativos.
+         */
+        document
+            .querySelectorAll('.option-select')
+            .forEach(
+                wrapper =>
+                    wrapper.refreshOptions?.()
+            );
+    }
+
+
+    /**
+     * Descarga la lista de nodos desde el backend y actualiza el selector principal.
+     *
+     * Puede recibirse un identificador para seleccionar automaticamente un nodo
+     * despues de recargar la lista, por ejemplo tras guardar o crear uno nuevo.
+     *
+     * @param {string|null} selectedId Identificador que debe quedar seleccionado.
+     * @returns {Promise<void>}
+     */
+    async function loadNodes(selectedId = null) {
+        /*
+         * Se solicita al backend la coleccion completa de nodos.
+         */
+        const response =
+            await fetch(`${API_BASE}/api/nodos`);
+
+        /*
+         * Se valida expresamente response.ok porque fetch() no lanza una excepcion
+         * automatica ante codigos HTTP de error.
+         */
+        if (!response.ok) {
+            throw new Error(
+                'No se pudieron cargar los nodos'
+            );
+        }
+
+        /* La respuesta JSON sustituye la cache local. */
+        nodes = await response.json();
+
+        /*
+         * Se genera dinamicamente el contenido del SELECT.
+         * La primera opcion vacia permite representar ausencia de seleccion.
+         */
+        nodeSelect.innerHTML =
+            '<option value=""></option>'
+            + nodes.map(node => `
+                <option value="${node.nodo_id}">
+                    ${node.nodo_id} (${node.origen})
+                </option>
+            `).join('');
+
+        /*
+         * Si se recibe selectedId se selecciona dicho nodo. En caso contrario se
+         * mantiene la opcion vacia.
+         */
+        nodeSelect.value =
+            selectedId || '';
+
+        /*
+         * El buscador personalizado debe actualizarse porque las opciones del
+         * SELECT acaban de cambiar.
+         */
+        document
+            .getElementById('nodeSelectSearch')
+            ?.refreshOptions?.();
+
+        /*
+         * Finalmente se carga la configuracion del nodo seleccionado, si existe.
+         */
+        renderSelectedNode();
+    }
+
+
+    /**
+     * Guarda en el backend la configuracion modificada del nodo seleccionado.
+     *
+     * Se recopilan las propiedades generales y los umbrales del formulario y se
+     * envian como JSON al endpoint especifico del nodo.
+     *
+     * La respuesta del backend incluye un array changes que permite informar del
+     * numero de modificaciones auditadas.
+     *
+     * @param {SubmitEvent} event Evento submit del formulario.
+     * @returns {Promise<void>}
+     */
+    async function saveNodeConfig(event) {
+        /*
+         * Se evita el envio tradicional del formulario y la recarga de la pagina.
+         */
+        event.preventDefault();
+
+        const node = selectedNode();
+
+        /*
+         * No se puede guardar configuracion si no existe ningun nodo seleccionado.
+         */
+        if (!node) {
+            return;
+        }
+
+        /*
+         * Se construye el objeto enviado al backend.
+         *
+         * El campo operario identifica el origen de la modificacion para la
+         * trazabilidad y auditoria de cambios.
+         */
+        const payload = {
+            operario: 'OPERADOR_LOCAL',
+            nombre: fields.nombre.value,
+            tipo: fields.tipo.value,
+            origen: fields.origen.value,
+            activo: fields.activo.value,
+            umbral_temp_max: fields.umbral_temp_max.value,
+            umbral_humedad_min: fields.umbral_humedad_min.value,
+            umbral_humedad_max: fields.umbral_humedad_max.value,
+            umbral_sonido_max: fields.umbral_sonido_max.value
+        };
+
+        try {
+            /*
+             * encodeURIComponent() codifica el identificador antes de incorporarlo
+             * a la ruta para evitar problemas con caracteres especiales.
+             */
+            const response = await fetch(
+                `${API_BASE}/api/nodos/${encodeURIComponent(node.nodo_id)}/config`,
+                {
+                    method: 'POST',
+
+                    /*
+                     * Se informa de que el cuerpo se encuentra codificado como JSON.
+                     */
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+
+                    /*
+                     * JSON.stringify() transforma el objeto JavaScript en texto JSON.
+                     */
+                    body: JSON.stringify(payload)
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error();
+            }
+
+            /* Se procesa la respuesta del backend. */
+            const result =
+                await response.json();
+
+            /*
+             * Se recarga la lista y se mantiene seleccionado el mismo nodo para
+             * reflejar exactamente los datos persistidos.
+             */
+            await loadNodes(node.nodo_id);
+
+            /*
+             * Si result.changes contiene elementos se informa del numero de cambios
+             * auditados. En caso contrario se comunica que no habia modificaciones.
+             */
+            setStatus(
+                'nodeSaveStatus',
+                result.changes.length
+                    ? `Cambios auditados: ${result.changes.length}`
+                    : 'No habia cambios nuevos.'
+            );
+
+        } catch (error) {
+            setStatus(
+                'nodeSaveStatus',
+                'Error guardando configuracion del nodo.',
+                true
+            );
+        }
+    }
+
+
+    /**
+     * Crea un nuevo nodo simulado a partir del formulario lateral.
+     *
+     * La operacion utiliza POST sobre la coleccion /api/nodos. Tras la creacion, se
+     * limpia el formulario, se recarga la lista de nodos y se selecciona
+     * automaticamente el nuevo registro.
+     *
+     * @param {SubmitEvent} event Evento submit del formulario.
+     * @returns {Promise<void>}
+     */
+    async function createNode(event) {
+        event.preventDefault();
+
+        /*
+         * Se recopilan los tres datos requeridos para crear el nuevo nodo.
+         */
+        const payload = {
+            nodo_id:
+                document.getElementById('newNodeId').value,
+
+            nombre:
+                document.getElementById('newNodeName').value,
+
+            tipo:
+                document.getElementById('newNodeType').value
+        };
+
+        try {
+            const response = await fetch(
+                `${API_BASE}/api/nodos`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                }
+            );
+
+            /*
+             * Se procesa primero el JSON para poder utilizar el mensaje de error
+             * devuelto por el backend cuando corresponda.
+             */
+            const result =
+                await response.json();
+
+            if (!response.ok) {
+                throw new Error(
+                    result.error ||
+                    'No se pudo crear el nodo'
+                );
+            }
+
+            /*
+             * El formulario se vacia tras una creacion correcta.
+             */
+            document
+                .getElementById('newNodeForm')
+                .reset();
+
+            /*
+             * Se recarga la lista y se selecciona automaticamente el nodo recien
+             * creado utilizando el identificador devuelto por el backend.
+             */
+            await loadNodes(result.nodo_id);
+
+            setStatus(
+                'newNodeStatus',
+                `Nodo creado: ${result.nodo_id}`
+            );
+
+        } catch (error) {
+            setStatus(
+                'newNodeStatus',
+                error.message,
+                true
+            );
+        }
+    }
+
+
+    /**
+     * Consulta el estado general del sistema y actualiza el bloque de diagnostico.
+     *
+     * La informacion recibida incluye el estado de la base de datos, el numero de
+     * nodos simulados, la conexion con Arduino y el volumen de mediciones
+     * almacenadas.
+     *
+     * @returns {Promise<void>}
+     */
+    async function loadSystemDiagnosis() {
+        try {
+            const response =
+                await fetch(
+                    `${API_BASE}/api/sistema/estado`
+                );
+
+            if (!response.ok) {
+                throw new Error();
+            }
+
+            const status =
+                await response.json();
+
+            /*
+             * BASE DE DATOS
+             * ---------------------------------------------------------------------
+             * El encadenamiento opcional ?. evita errores si database no existe.
+             */
+            document.getElementById('diagDb').textContent =
+                status.database?.active
+                    ? 'ACTIVA'
+                    : 'ERROR';
+
+            document.getElementById('diagDb').style.color =
+                status.database?.active
+                    ? 'var(--accent-green)'
+                    : 'var(--accent-red)';
+
+
+            /*
+             * SIMULADOR
+             * ---------------------------------------------------------------------
+             * El operador ?? utiliza cero cuando no existe el contador.
+             */
+            document.getElementById('diagSim').textContent =
+                `${status.nodes?.simulated ?? 0} simulados`;
+
+
+            /*
+             * ARDUINO
+             * ---------------------------------------------------------------------
+             * Si existe conexion se muestra tambien el puerto utilizado.
+             */
+            document.getElementById('diagArduino').textContent =
+                status.arduino?.connected
+                    ? `CONECTADO (${status.arduino.port || '--'})`
+                    : 'DESCONECTADO';
+
+            document.getElementById('diagArduino').style.color =
+                status.arduino?.connected
+                    ? 'var(--accent-green)'
+                    : 'var(--text-dim)';
+
+
+            /*
+             * ALMACENAMIENTO
+             * ---------------------------------------------------------------------
+             * Se muestra el numero total de mediciones registradas.
+             */
+            document.getElementById('diagStorage').textContent =
+                `${status.storage?.measurements ?? 0} registros`;
+
+        } catch (error) {
+            /*
+             * Si la API no puede consultarse, se informa especificamente en el
+             * indicador de base de datos.
+             */
+            document.getElementById('diagDb').textContent =
+                'API no disponible';
+
+            document.getElementById('diagDb').style.color =
+                'var(--accent-red)';
+        }
+    }
+
+
+    /*
+     * ============================================================================
+     * REGISTRO DE EVENTOS
+     * ============================================================================
+     */
+
+    /*
+     * El SELECT nativo tambien conserva un listener de cambio por compatibilidad
+     * con cambios programaticos o posibles interacciones futuras.
+     */
+    nodeSelect.addEventListener(
+        'change',
+        renderSelectedNode
+    );
+
+    /*
+     * El formulario de configuracion delega su envio en saveNodeConfig().
+     */
+    document
+        .getElementById('nodeConfigForm')
+        .addEventListener(
+            'submit',
+            saveNodeConfig
+        );
+
+    /*
+     * El formulario de alta delega su envio en createNode().
+     */
+    document
+        .getElementById('newNodeForm')
+        .addEventListener(
+            'submit',
+            createNode
+        );
+
+
+    /*
+     * ============================================================================
+     * INICIALIZACION DE LA VISTA
+     * ============================================================================
+     */
+    window.addEventListener('load', () => {
+
+        /*
+         * Se inicializa el buscador asociado al selector principal de nodos.
+         */
+        initSearchSelect(
+            document.getElementById('nodeSelectSearch')
+        );
+
+        /*
+         * Se inicializan los selectores personalizados de origen y estado.
+         */
+        document
+            .querySelectorAll('.option-select')
+            .forEach(initOptionSelect);
+
+        /*
+         * Se descarga la lista de nodos.
+         *
+         * catch() captura el error rechazado por loadNodes() y muestra un mensaje
+         * visible dentro de la pagina.
+         */
+        loadNodes()
+            .catch(() =>
+                setStatus(
+                    'nodeSaveStatus',
+                    'No se pudieron cargar los nodos.',
+                    true
+                )
+            );
+
+        /*
+         * Se ejecuta una primera consulta del diagnostico inmediatamente al cargar.
+         */
+        loadSystemDiagnosis();
+    });
+
+
+    /*
+     * ============================================================================
+     * ACTUALIZACION PERIODICA DEL DIAGNOSTICO
+     * ============================================================================
+     *
+     * setInterval() ejecuta loadSystemDiagnosis cada 10.000 milisegundos, es decir,
+     * cada diez segundos. Esto permite que el estado de Arduino, base de datos y
+     * almacenamiento se mantenga relativamente actualizado sin recargar la pagina.
+     */
+    setInterval(
+        loadSystemDiagnosis,
+        10000
+    );
+</script>
+<!--
+    Script compartido encargado de gestionar el tema visual y mantener la
+    preferencia seleccionada de forma coherente con el resto de la aplicacion.
+-->
+<script src="theme.js"></script>
+
+</body>
+</html>

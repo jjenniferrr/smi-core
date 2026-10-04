@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <!--
+        ============================================================================
+        ARCHIVO: login.html
+        DESCRIPCION GENERAL
+        ============================================================================
+
+        Este archivo implementa la pantalla de autenticacion del sistema
+        S.M.I. CORE.
+
+        Su objetivo principal consiste en solicitar las credenciales de acceso
+        antes de permitir que un usuario acceda al dashboard industrial y al resto
+        de modulos protegidos de la aplicacion.
+
+        La autenticacion se realiza mediante un formulario HTML tradicional que
+        envia el nombre de usuario y la contrasena al endpoint /login del backend.
+        El servidor es el responsable de validar las credenciales y, cuando son
+        correctas, crear la sesion correspondiente en el navegador.
+
+        La pantalla incorpora tambien un campo oculto denominado "next". Este
+        parametro permite conservar la pagina que el usuario intento abrir antes
+        de ser redirigido al login. Una vez completada correctamente la
+        autenticacion, el backend puede utilizar dicho valor para devolver al
+        usuario a su destino original.
+
+        El JavaScript de esta vista realiza principalmente dos tareas:
+        - Recuperar de la URL el parametro "next" y copiarlo al campo oculto
+          incluido en el formulario.
+        - Detectar el parametro "error=1" para mostrar un mensaje cuando las
+          credenciales introducidas no han sido validas.
+
+        FLUJO GENERAL DE FUNCIONAMIENTO
+        --------------------------------
+        1. El usuario accede a la pantalla de login.
+        2. Si existe un parametro "next" en la URL, se conserva como destino.
+        3. El usuario introduce su nombre de usuario y contrasena.
+        4. El navegador envia el formulario mediante POST al endpoint /login.
+        5. El backend comprueba las credenciales recibidas.
+        6. Si la autenticacion es correcta, el servidor crea la sesion y permite
+           continuar hacia el destino correspondiente.
+        7. Si las credenciales son incorrectas y el backend devuelve la vista con
+           el parametro error=1, se muestra el aviso de acceso incorrecto.
+
+        La seguridad real de la autenticacion corresponde al backend. Esta vista
+        solamente recopila las credenciales y representa el resultado recibido.
+        ============================================================================
+    -->
+
+    <!-- Define la codificacion de caracteres utilizada por el documento. -->
+    <meta charset="UTF-8">
+
+    <!--
+        Permite que el contenido se adapte correctamente al ancho de dispositivos
+        moviles y evita que el navegador utilice una escala de escritorio.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Titulo mostrado en la pestana del navegador. -->
+    <title>S.M.I. CORE | Acceso</title>
+
+    <!--
+        Se recupera la preferencia visual almacenada en localStorage antes de que
+        el navegador represente completamente la pagina.
+
+        Si no existe ningun tema guardado bajo la clave "smi-theme", se utiliza
+        "dark" como valor predeterminado. Esta ejecucion temprana evita cambios
+        visuales perceptibles entre el momento de carga y la aplicacion del tema.
+    -->
+    <script>
+        document.documentElement.setAttribute(
+            'data-theme',
+            localStorage.getItem('smi-theme') || 'dark'
+        );
+    </script>
+
+    <!--
+        Se cargan las tipografias utilizadas por la aplicacion.
+        Inter se utiliza para los textos generales y JetBrains Mono para
+        identificadores o textos de caracter tecnico.
+    -->
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap"
+        rel="stylesheet">
+
+    <!-- Hoja de estilos compartida con el resto de pantallas de S.M.I. CORE. -->
+    <link href="theme.css" rel="stylesheet">
+
+    <style>
+        /*
+         * =========================================================================
+         * VARIABLES GLOBALES DE ESTILO
+         * =========================================================================
+         *
+         * Las variables CSS centralizan los colores principales utilizados en la
+         * pantalla de acceso. De esta forma se evita repetir valores y se facilita
+         * la coherencia visual con el resto del sistema.
+         */
+        :root {
+            --bg-main: #0d1117;
+            --panel-bg: #161b22;
+            --accent-blue: #58a6ff;
+            --border: #30363d;
+            --text-main: #e6edf3;
+            --text-dim: #7d8590;
+            --accent-red: #f85149;
+        }
+
+        /*
+         * box-sizing: border-box provoca que el padding y los bordes formen parte
+         * de la anchura y altura total calculada de los elementos.
+         */
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+        }
+
+        /*
+         * =========================================================================
+         * CONFIGURACION GENERAL DE LA PAGINA
+         * =========================================================================
+         *
+         * Se utiliza CSS Grid para centrar el panel de autenticacion tanto
+         * horizontal como verticalmente en la pantalla.
+         *
+         * Los degradados radiales aportan profundidad visual sin interferir con la
+         * legibilidad del formulario.
+         */
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+
+            background:
+                radial-gradient(
+                    circle at top right,
+                    rgba(88, 166, 255, 0.15),
+                    transparent 28%
+                ),
+                radial-gradient(
+                    circle at bottom left,
+                    rgba(63, 185, 80, 0.08),
+                    transparent 24%
+                ),
+                var(--bg-main);
+
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            padding: 20px;
+        }
+
+        /*
+         * =========================================================================
+         * CONTENEDOR PRINCIPAL DEL LOGIN
+         * =========================================================================
+         *
+         * La anchura queda limitada a 420 pixeles para mantener una estructura
+         * compacta y facilitar la introduccion de credenciales.
+         */
+        .login-shell {
+            width: min(100%, 420px);
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 30px;
+            overflow: hidden;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.32);
+        }
+
+        /*
+         * Bloque que contiene la identificacion visual y descripcion del sistema.
+         */
+        .brand {
+            margin-bottom: 22px;
+        }
+
+        /*
+         * Titulo principal de la pantalla.
+         */
+        .brand h1 {
+            margin: 0 0 4px;
+            font-size: 2rem;
+            line-height: 1.05;
+        }
+
+        /*
+         * Los textos secundarios utilizan un tono menos destacado para mantener
+         * una jerarquia visual clara.
+         */
+        .brand small,
+        .brand p {
+            color: var(--text-dim);
+        }
+
+        /*
+         * La etiqueta superior utiliza una fuente monoespaciada para reforzar su
+         * caracter tecnico.
+         */
+        .brand small {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            letter-spacing: 1px;
+        }
+
+        /*
+         * Texto explicativo mostrado bajo el titulo de la aplicacion.
+         */
+        .brand p {
+            margin: 14px 0 0;
+            line-height: 1.5;
+        }
+
+        /*
+         * =========================================================================
+         * FORMULARIO DE AUTENTICACION
+         * =========================================================================
+         *
+         * El formulario se organiza verticalmente utilizando CSS Grid.
+         */
+        form {
+            display: grid;
+            gap: 16px;
+        }
+
+        /*
+         * Cada campo agrupa su etiqueta y su elemento de entrada.
+         */
+        .field {
+            display: grid;
+            gap: 8px;
+        }
+
+        /*
+         * Estilo de las etiquetas correspondientes a usuario y contrasena.
+         */
+        .field label {
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+        }
+
+        /*
+         * Los campos ocupan todo el ancho disponible dentro del formulario.
+         */
+        .field input {
+            display: block;
+            width: 100%;
+            max-width: 100%;
+            min-width: 0;
+        }
+
+        /*
+         * =========================================================================
+         * MENSAJE DE ERROR DE AUTENTICACION
+         * =========================================================================
+         *
+         * El aviso permanece oculto mientras no exista ningun error.
+         */
+        .login-error {
+            margin: 0 0 16px;
+            padding: 12px 14px;
+            border-radius: 12px;
+            border: 1px solid rgba(248, 81, 73, 0.35);
+            background: rgba(248, 81, 73, 0.08);
+            color: #ffb0ac;
+            font-size: 13px;
+            display: none;
+        }
+
+        /*
+         * JavaScript anade la clase "visible" cuando la URL indica que las
+         * credenciales introducidas no han sido validas.
+         */
+        .login-error.visible {
+            display: block;
+        }
+
+        /*
+         * =========================================================================
+         * BOTON DE ACCESO
+         * =========================================================================
+         *
+         * El boton envia el formulario utilizando el comportamiento HTML
+         * establecido mediante method="post" y action="/login".
+         */
+        .btn-login {
+            width: 100%;
+            min-height: 46px;
+            border: none;
+            border-radius: 12px;
+            background: linear-gradient(180deg, #5fa7ff 0%, #3a7de2 100%);
+            color: #ffffff;
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            box-shadow: 0 10px 24px rgba(31, 102, 209, 0.24);
+        }
+
+        /*
+         * Texto auxiliar situado al final del panel.
+         */
+        .helper {
+            margin-top: 16px;
+            color: var(--text-dim);
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        /*
+         * =========================================================================
+         * DISENO RESPONSIVE
+         * =========================================================================
+         *
+         * En pantallas de reducido tamano se disminuyen los espacios interiores y
+         * el tamano del titulo para aprovechar mejor el espacio disponible.
+         */
+        @media (max-width: 560px) {
+            .login-shell {
+                padding: 22px 18px;
+                border-radius: 18px;
+            }
+
+            .brand h1 {
+                font-size: 1.7rem;
+            }
+        }
+    </style>
+</head>
+
+<body class="login-page">
+
+    <!--
+        ============================================================================
+        CONTENIDO PRINCIPAL DE AUTENTICACION
+        ============================================================================
+        El panel concentra toda la informacion y controles necesarios para iniciar
+        una sesion en S.M.I. CORE.
+    -->
+    <main class="login-shell">
+
+        <!--
+            CABECERA DE LA APLICACION
+            Identifica el sistema e informa de que se trata de un acceso protegido.
+        -->
+        <div class="brand">
+            <small>S.M.I. CORE // ACCESO PROTEGIDO</small>
+
+            <h1>Sistema de monitorizacion</h1>
+
+            <p>
+                Introduce el usuario y la contrasena para acceder al dashboard industrial y al resto de modulos.
+            </p>
+        </div>
+
+        <!--
+            MENSAJE DE ERROR
+            El bloque permanece oculto inicialmente. JavaScript lo hace visible
+            cuando el parametro "error" de la URL contiene el valor "1".
+        -->
+        <div id="loginError" class="login-error">
+            Credenciales incorrectas.
+        </div>
+
+        <!--
+            FORMULARIO DE LOGIN
+            ------------------------------------------------------------------------
+            method="post":
+                Las credenciales se envian dentro del cuerpo de una peticion POST.
+
+            action="/login":
+                El navegador envia el formulario directamente al endpoint /login
+                gestionado por el backend.
+
+            autocomplete="on":
+                Permite que el navegador utilice sus mecanismos habituales de
+                autocompletado o gestores de credenciales.
+        -->
+        <form
+            method="post"
+            action="/login"
+            autocomplete="on">
+
+            <!--
+                CAMPO OCULTO DE REDIRECCION
+                --------------------------------------------------------------------
+                Este valor conserva la ruta que el usuario intento abrir antes de
+                ser enviado al login.
+
+                JavaScript sustituye inicialmente "/" por el valor recibido en el
+                parametro "next" de la URL cuando dicho parametro existe.
+            -->
+            <input
+                type="hidden"
+                name="next"
+                id="nextField"
+                value="/">
+
+            <!-- Campo utilizado para introducir el nombre de usuario. -->
+            <div class="field">
+                <label for="username">Usuario</label>
+
+                <!--
+                    required impide que el navegador envie el formulario mientras
+                    el campo permanezca vacio.
+                -->
+                <input
+                    id="username"
+                    name="username"
+                    class="input-custom"
+                    type="text"
+                    required>
+            </div>
+
+            <!-- Campo utilizado para introducir la contrasena. -->
+            <div class="field">
+                <label for="password">Contrasena</label>
+
+                <!--
+                    type="password" oculta visualmente los caracteres introducidos.
+                    La validacion real de la clave corresponde al backend.
+                -->
+                <input
+                    id="password"
+                    name="password"
+                    class="input-custom"
+                    type="password"
+                    required>
+            </div>
+
+            <!--
+                Al pulsar este boton, el navegador envia el formulario al backend.
+                No se utiliza JavaScript para transmitir las credenciales.
+            -->
+            <button
+                type="submit"
+                class="btn-login">
+                Entrar al sistema
+            </button>
+        </form>
+
+        <!--
+            Se informa de que no existe un mecanismo publico de registro y que las
+            cuentas son gestionadas desde la administracion del sistema.
+        -->
+        <p class="helper">
+            El acceso se asigna desde administracion. No hay registro publico en esta demo y la sesion se guarda de forma segura en el navegador.
+        </p>
+    </main>
+
+
+    <script>
+        /*
+         * ============================================================================
+         * LOGICA AUXILIAR DE LA PANTALLA DE ACCESO
+         * ============================================================================
+         *
+         * El envio y validacion de credenciales no se realiza desde este script.
+         * El formulario HTML se envia directamente al backend.
+         *
+         * Este bloque unicamente se encarga de:
+         * - Recuperar el destino original indicado mediante "next".
+         * - Mantener dicho destino dentro del formulario.
+         * - Detectar el parametro "error=1".
+         * - Mostrar el aviso de credenciales incorrectas cuando corresponde.
+         * ============================================================================
+         */
+
+
+        /*
+         * RECUPERACION DE LOS PARAMETROS DE LA URL
+         * -------------------------------------------------------------------------
+         *
+         * URLSearchParams proporciona una interfaz para consultar facilmente los
+         * valores incluidos en la query string.
+         *
+         * Por ejemplo, ante una URL como:
+         *
+         * login.html?next=/reportes.html&error=1
+         *
+         * params.get('next') devolveria "/reportes.html" y params.get('error')
+         * devolveria "1".
+         */
+        const params = new URLSearchParams(window.location.search);
+
+
+        /*
+         * CONSERVACION DEL DESTINO ORIGINAL
+         * -------------------------------------------------------------------------
+         *
+         * Se obtiene el parametro "next" y se almacena en el campo oculto del
+         * formulario.
+         *
+         * El operador || establece "/" como valor alternativo cuando el parametro
+         * no existe o contiene un valor vacio.
+         */
+        document.getElementById('nextField').value =
+            params.get('next') || '/';
+
+
+        /*
+         * COMPROBACION DEL TIPO DE NAVEGACION
+         * -------------------------------------------------------------------------
+         *
+         * window.performance permite consultar informacion relacionada con la
+         * navegacion y el rendimiento de la pagina.
+         *
+         * performance.getEntriesByType('navigation') devuelve las entradas de
+         * navegacion registradas por el navegador.
+         *
+         * La primera entrada contiene, entre otras propiedades, "type", que puede
+         * indicar si la pagina se ha cargado normalmente, mediante recarga u otro
+         * mecanismo.
+         *
+         * El operador ?. es un encadenamiento opcional. Evita producir un error si
+         * no existe una primera entrada de navegacion.
+         *
+         * En el comportamiento actual no es necesario realizar ninguna accion
+         * adicional cuando la pagina procede de una recarga; la comprobacion se
+         * conserva de forma explicita para documentar dicho escenario.
+         */
+        if (
+            window.performance
+            && performance.getEntriesByType('navigation')[0]?.type === 'reload'
+        ) {
+            /*
+             * No se aplica ninguna modificacion adicional.
+             *
+             * El formulario y la representacion actual de la pantalla pueden
+             * continuar funcionando de forma normal despues de una recarga.
+             */
+        }
+
+
+        /*
+         * VISUALIZACION DEL ERROR DE AUTENTICACION
+         * -------------------------------------------------------------------------
+         *
+         * Cuando el backend devuelve al usuario a la pagina de login despues de
+         * unas credenciales incorrectas, puede incluir el parametro:
+         *
+         * error=1
+         *
+         * La vista detecta dicho valor y anade la clase CSS "visible" al mensaje de
+         * error. Como consecuencia, el bloque deja de tener display:none y aparece
+         * en pantalla.
+         */
+        if (params.get('error') === '1') {
+            document
+                .getElementById('loginError')
+                .classList
+                .add('visible');
+        }
+    </script>
+
+
+    <!--
+        Script compartido encargado de gestionar el tema visual de la aplicacion y
+        mantener la preferencia seleccionada por el usuario.
+    -->
+    <script src="theme.js"></script>
+</body>
+</html>

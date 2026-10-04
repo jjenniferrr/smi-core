@@ -1,0 +1,1541 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <!--
+        ============================================================================
+        ARCHIVO: gestion-permisos.html
+        DESCRIPCION GENERAL
+        ============================================================================
+
+        Este archivo implementa el panel de gestion de permisos y cuentas internas
+        del sistema S.M.I. CORE.
+
+        La vista esta destinada exclusivamente a usuarios con rol administrador y
+        centraliza las principales operaciones relacionadas con el control de
+        acceso de los usuarios internos de la aplicacion.
+
+        Entre sus responsabilidades principales se encuentran:
+        - Consultar las cuentas registradas en el sistema.
+        - Mostrar el nombre de usuario, rol y estado de cada cuenta.
+        - Indicar si la contrasena asignada continua siendo provisional.
+        - Crear nuevas cuentas internas.
+        - Modificar el rol asociado a una cuenta existente.
+        - Activar o desactivar el acceso de una cuenta.
+        - Refrescar automaticamente la informacion despues de realizar cambios.
+        - Mostrar indicadores resumen sobre el numero total de cuentas,
+          administradores y cuentas activas.
+
+        La comunicacion con el backend se realiza mediante una API administrativa.
+        Las operaciones de lectura utilizan peticiones GET, la creacion de nuevas
+        cuentas utiliza POST y las modificaciones de cuentas existentes se realizan
+        mediante PATCH.
+
+        La interfaz incorpora ademas un selector de rol personalizado. El elemento
+        SELECT nativo se mantiene oculto como fuente real del valor seleccionado,
+        mientras que JavaScript genera una representacion visual adaptada al estilo
+        del sistema. De esta manera se conserva un valor de formulario estandar a
+        la vez que se ofrece una experiencia visual uniforme.
+
+        FLUJO GENERAL DE FUNCIONAMIENTO
+        --------------------------------
+        1. Al cargarse la pagina se inicializan los selectores personalizados.
+        2. Se solicita al backend la lista completa de cuentas.
+        3. La tabla se genera dinamicamente a partir de los datos recibidos.
+        4. Se calculan los indicadores resumen de la parte superior.
+        5. Cada fila permite modificar el rol y el estado activo de una cuenta.
+        6. Los cambios se envian al backend mediante una peticion PATCH.
+        7. El formulario lateral permite crear nuevas cuentas mediante POST.
+        8. Tras crear o modificar una cuenta, se vuelve a solicitar la lista para
+           garantizar que la interfaz refleja el estado persistido en el servidor.
+
+        La autorizacion efectiva de estas operaciones debe ser validada por el
+        backend. La restriccion visual de la pagina no sustituye los controles de
+        seguridad del servidor.
+        ============================================================================
+    -->
+    <!-- Define la codificacion de caracteres utilizada por el documento. -->
+    <meta charset="UTF-8">
+
+    <!-- Permite adaptar correctamente la interfaz a dispositivos moviles. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Titulo mostrado en la pestana del navegador. -->
+    <title>S.M.I. CORE | Gestion de Permisos</title>
+
+    <!--
+        Se cargan las tipografias utilizadas por la interfaz.
+        Inter se emplea para los textos generales y JetBrains Mono para valores
+        tecnicos, identificadores y datos que requieren una lectura mas estructurada.
+    -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+
+    <!-- Bootstrap aporta utilidades visuales y clases auxiliares reutilizadas. -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!--
+        Se aplica el tema guardado antes de que la pagina sea representada.
+        Esto evita que aparezca brevemente un tema distinto durante la carga.
+        Si no existe ninguna preferencia almacenada, se utiliza el tema oscuro.
+    -->
+    <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('smi-theme') || 'dark');</script>
+
+    <!-- Hoja de estilos compartida con el resto de pantallas del sistema. -->
+    <link href="theme.css" rel="stylesheet">
+
+    <style>
+        /*
+         * VARIABLES GLOBALES DE ESTILO
+         * -------------------------------------------------------------------------
+         * Se centralizan los colores principales de la interfaz mediante variables
+         * CSS para facilitar la coherencia visual y el mantenimiento de la paleta.
+         */
+        :root {
+            --bg-main: #0d1117;
+            --panel-bg: #161b22;
+            --panel-soft: #1c232d;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --accent-orange: #d29922;
+            --border: #30363d;
+            --text-main: #e6edf3;
+            --text-dim: #7d8590;
+        }
+
+        /*
+         * CONFIGURACION GENERAL DE LA PAGINA
+         * -------------------------------------------------------------------------
+         * El cuerpo utiliza Flexbox para distribuir el menu lateral fijo y el
+         * contenido principal. La altura minima garantiza que la vista ocupe al
+         * menos toda la pantalla disponible.
+         */
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            min-height: 100vh;
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+
+        /*
+         * border-box incluye padding y bordes dentro de las dimensiones declaradas,
+         * simplificando los calculos de anchura de los diferentes componentes.
+         */
+        *, *::before, *::after { box-sizing: border-box; }
+
+        /* Ajusta el color utilizado para textos secundarios de Bootstrap. */
+        .text-muted { color: #9aa4b2 !important; }
+
+        /*
+         * MENU LATERAL
+         * -------------------------------------------------------------------------
+         * En escritorio se mantiene fijo y ocupa 260 pixeles de ancho.
+         */
+        .sidebar {
+            width: 260px;
+            height: 100vh;
+            background: var(--panel-bg);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 30px 20px;
+            position: fixed;
+        }
+
+        .logo-box { margin-bottom: 40px; padding-left: 10px; }
+        .nav-list { flex-grow: 1; }
+
+        .nav-item {
+            padding: 10px 14px;
+            color: var(--text-dim);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            border-radius: 6px;
+            margin-bottom: 5px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .nav-item:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-main); }
+        .nav-item.active {
+            background: rgba(88, 166, 255, 0.1);
+            color: var(--accent-blue);
+            border: 1px solid rgba(88, 166, 255, 0.2);
+        }
+
+        .sidebar-divider { height: 1px; background: var(--border); margin: 15px 0; }
+        .sidebar-label {
+            color: var(--text-dim);
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding-left: 14px;
+            margin-bottom: 10px;
+            display: block;
+        }
+
+        /*
+         * CONTENIDO PRINCIPAL
+         * -------------------------------------------------------------------------
+         * El margen izquierdo coincide con la anchura del menu fijo para impedir
+         * que ambos bloques se superpongan.
+         */
+        .main-content {
+            margin-left: 260px;
+            padding: 40px;
+            flex-grow: 1;
+            overflow-y: auto;
+            min-height: 100vh;
+        }
+
+        .page-title {
+            font-size: 1.85rem;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .page-subtitle {
+            color: var(--text-dim);
+            max-width: 760px;
+            line-height: 1.6;
+            margin-bottom: 24px;
+        }
+
+        /*
+         * INDICADORES RESUMEN
+         * -------------------------------------------------------------------------
+         * Los tres indicadores permiten conocer rapidamente el total de cuentas,
+         * el numero de administradores y las cuentas actualmente activas.
+         */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .summary-card,
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 22px;
+        }
+
+        .summary-label {
+            color: var(--text-dim);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .summary-value {
+            font-size: 2rem;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /*
+         * DISTRIBUCION DE LOS BLOQUES DE GESTION
+         * -------------------------------------------------------------------------
+         * La tabla de cuentas y el formulario de alta se organizan dentro de una
+         * estructura comun que mantiene la separacion entre consulta y creacion.
+         */
+        .layout-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 24px;
+        }
+
+        .accounts-panel {
+            width: 100%;
+        }
+
+        .create-panel {
+            width: min(100%, 540px);
+        }
+
+        .panel-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 18px;
+        }
+
+        /*
+         * TABLA DE CUENTAS
+         * -------------------------------------------------------------------------
+         * table-layout: fixed permite controlar de manera estable la anchura de
+         * cada columna, evitando cambios bruscos provocados por textos largos.
+         */
+        .accounts-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+
+        .accounts-table th,
+        .accounts-table td {
+            padding: 14px 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            vertical-align: middle;
+        }
+
+        .accounts-table th {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-dim);
+            font-weight: 700;
+        }
+
+        .accounts-table td {
+            color: var(--text-main);
+            overflow-wrap: anywhere;
+        }
+
+        .accounts-table th:nth-child(1) { width: 14%; }
+        .accounts-table th:nth-child(2) { width: 18%; }
+        .accounts-table th:nth-child(3) { width: 11%; }
+        .accounts-table th:nth-child(4) { width: 16%; }
+        .accounts-table th:nth-child(5) { width: 12%; }
+        .accounts-table th:nth-child(6) { width: 29%; }
+
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /*
+         * ETIQUETAS DE ROL Y ESTADO
+         * -------------------------------------------------------------------------
+         * Los badges permiten reconocer visualmente el rol, el estado activo y
+         * la situacion de la contrasena de cada cuenta.
+         */
+        .role-badge,
+        .state-badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 28px;
+            padding: 0 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .role-normal { background: rgba(88, 166, 255, 0.12); color: #8cc4ff; }
+        .role-medio { background: rgba(210, 153, 34, 0.14); color: #f0c96a; }
+        .role-admin { background: rgba(188, 140, 255, 0.14); color: #d0b4ff; }
+        .state-active { background: rgba(63, 185, 80, 0.14); color: #74db86; }
+        .state-off { background: rgba(248, 81, 73, 0.14); color: #ff9f98; }
+        .state-pending { background: rgba(88, 166, 255, 0.14); color: #9fd0ff; }
+
+        /*
+         * ACCIONES DISPONIBLES EN CADA FILA
+         * -------------------------------------------------------------------------
+         * Cada cuenta dispone de un selector de rol, una casilla de activacion y
+         * un boton que confirma los cambios realizados.
+         */
+        .row-actions {
+            display: flex;
+            flex-wrap: nowrap;
+            gap: 10px;
+            align-items: center;
+            justify-content: flex-start;
+        }
+
+        .row-actions .role-select-shell {
+            min-width: 0;
+            flex: 1 1 190px;
+        }
+
+        .row-actions label {
+            flex: 0 0 auto;
+            white-space: nowrap;
+        }
+
+        .row-actions .btn-secondary-panel {
+            flex: 0 0 auto;
+        }
+
+        /*
+         * FORMULARIO DE CREACION DE CUENTAS
+         * -------------------------------------------------------------------------
+         * Los campos se organizan verticalmente mediante CSS Grid.
+         */
+        .form-grid {
+            display: grid;
+            gap: 16px;
+        }
+
+        .field {
+            display: grid;
+            gap: 8px;
+        }
+
+        .field label {
+            color: var(--text-dim);
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .field input,
+        .field select {
+            width: 100%;
+        }
+
+        /*
+         * SELECTOR PERSONALIZADO DE ROL
+         * -------------------------------------------------------------------------
+         * El SELECT HTML original se mantiene oculto y conserva el valor real del
+         * formulario. Sobre el se construye una interfaz visual personalizada.
+         */
+        .hidden-native-select {
+            display: none;
+        }
+
+        .role-select-shell {
+            position: relative;
+            min-width: 190px;
+        }
+
+        /*
+         * Boton visible que sustituye visualmente al SELECT nativo.
+         * Su texto se sincroniza con la opcion actualmente seleccionada.
+         */
+        .role-select-button {
+            position: relative;
+            width: 100%;
+            min-height: 46px;
+            border-radius: 14px;
+            border: 1px solid rgba(88, 166, 255, 0.24);
+            background:
+                linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.015) 100%),
+                #10161d;
+            color: var(--text-main);
+            padding: 0 42px 0 16px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 13px;
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.04),
+                0 0 0 3px rgba(88, 166, 255, 0.08);
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+        }
+
+        .role-select-button:hover {
+            border-color: rgba(88, 166, 255, 0.4);
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,0.05),
+                0 0 0 3px rgba(88, 166, 255, 0.12);
+        }
+
+        /*
+         * La flecha del desplegable se genera mediante bordes CSS.
+         * Al abrir el selector se rota para indicar visualmente el cambio de estado.
+         */
+        .role-select-button::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            right: 16px;
+            width: 9px;
+            height: 9px;
+            border-right: 2px solid #b8c7d9;
+            border-bottom: 2px solid #b8c7d9;
+            transform: translateY(-65%) rotate(45deg);
+            transition: transform 0.2s ease;
+            pointer-events: none;
+        }
+
+        .role-select-shell.open .role-select-button::after {
+            transform: translateY(-35%) rotate(225deg);
+        }
+
+        /*
+         * Menu flotante que contiene las distintas opciones disponibles.
+         * Por defecto permanece oculto y solo se muestra cuando el contenedor
+         * incorpora la clase "open".
+         */
+        .role-select-menu {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            right: 0;
+            z-index: 40;
+            display: none;
+            padding: 8px;
+            border-radius: 16px;
+            border: 1px solid rgba(124, 141, 166, 0.24);
+            background: linear-gradient(180deg, rgba(17,22,29,0.98) 0%, rgba(13,17,23,0.98) 100%);
+            box-shadow: 0 18px 36px rgba(0, 0, 0, 0.42);
+            backdrop-filter: blur(16px);
+        }
+
+        .role-select-shell.open .role-select-menu {
+            display: block;
+        }
+
+        .role-select-option {
+            width: 100%;
+            border: none;
+            background: transparent;
+            color: #dce6f2;
+            border-radius: 12px;
+            padding: 11px 12px;
+            text-align: left;
+            font-size: 13px;
+            font-weight: 600;
+            transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+        }
+
+        .role-select-option:hover {
+            background: rgba(88, 166, 255, 0.12);
+            color: #ffffff;
+            transform: translateX(2px);
+        }
+
+        .role-select-option.active {
+            background: linear-gradient(180deg, rgba(47,129,247,0.96) 0%, rgba(31,111,235,0.96) 100%);
+            color: #ffffff;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+        }
+
+        /*
+         * BOTONES DE ACCION
+         * -------------------------------------------------------------------------
+         * Se definen estilos comunes para las acciones principales y secundarias.
+         */
+        .btn-primary-panel,
+        .btn-secondary-panel {
+            min-height: 44px;
+            border-radius: 12px;
+            font-weight: 700;
+            border: 1px solid transparent;
+        }
+
+        .btn-primary-panel {
+            background: linear-gradient(180deg, #5fa7ff 0%, #3a7de2 100%);
+            color: #ffffff;
+            box-shadow: 0 10px 24px rgba(31, 102, 209, 0.24);
+        }
+
+        .btn-secondary-panel {
+            background: #242b34;
+            color: #ffffff;
+            border-color: rgba(255,255,255,0.08);
+        }
+
+        .status-note {
+            min-height: 20px;
+            color: var(--text-dim);
+            font-size: 12px;
+        }
+
+        /*
+         * DISENO RESPONSIVE PARA TABLETS
+         * -------------------------------------------------------------------------
+         * El menu lateral pasa a ocupar la parte superior y el contenido utiliza
+         * todo el ancho disponible.
+         */
+        @media (max-width: 980px) {
+            body { display: block; }
+            .sidebar {
+                position: static;
+                width: 100%;
+                height: auto;
+                padding: 18px;
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+            }
+            .main-content {
+                margin-left: 0;
+                padding: 24px;
+            }
+            .summary-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .create-panel {
+                width: 100%;
+            }
+        }
+
+        /*
+         * AJUSTE INTERMEDIO DE LAS ACCIONES
+         * -------------------------------------------------------------------------
+         * Cuando no existe suficiente espacio horizontal, el selector de rol pasa
+         * a ocupar una linea completa dentro de la fila de acciones.
+         */
+        @media (max-width: 1240px) {
+            .row-actions {
+                flex-wrap: wrap;
+            }
+
+            .row-actions .role-select-shell {
+                flex-basis: 100%;
+            }
+        }
+
+        /*
+         * DISENO RESPONSIVE PARA MOVILES
+         * -------------------------------------------------------------------------
+         * La tabla tradicional se transforma en bloques verticales para que cada
+         * cuenta pueda consultarse correctamente en una pantalla estrecha.
+         */
+        @media (max-width: 560px) {
+            .main-content {
+                padding: 18px 14px;
+            }
+
+            .accounts-table,
+            .accounts-table thead,
+            .accounts-table tbody,
+            .accounts-table th,
+            .accounts-table td,
+            .accounts-table tr {
+                display: block;
+                width: 100%;
+            }
+
+            /*
+             * Los encabezados se ocultan en la version movil porque cada fila se
+             * representa como una tarjeta vertical independiente.
+             */
+            .accounts-table thead {
+                display: none;
+            }
+
+            .accounts-table tr {
+                padding: 14px 0;
+                border-bottom: 1px solid rgba(255,255,255,0.08);
+            }
+
+            .accounts-table td {
+                padding: 6px 0;
+                border-bottom: none;
+            }
+
+            .create-panel {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<!--
+    ============================================================================
+    NAVEGACION PRINCIPAL
+    ============================================================================
+    La barra lateral ofrece acceso a las diferentes areas del sistema. La opcion
+    Gestion de Permisos aparece marcada como activa en esta vista.
+-->
+<nav class="sidebar">
+    <div class="logo-box">
+        <h5 class="text-white fw-bold mb-0">S.M.I. <span style="color:var(--accent-blue)">CORE</span></h5>
+        <small class="text-muted" style="font-size: 10px; font-family: 'JetBrains Mono';">VER. 2.6.0-STABLE</small>
+    </div>
+
+    <div class="nav-list">
+        <a href="index.html" class="nav-item">Dashboard Vivo</a>
+        <a href="mapa.html" class="nav-item">Mapa de Planta</a>
+        <a href="mantenimiento.html" class="nav-item">Analisis por Zonas</a>
+        <a href="historial.html" class="nav-item">Historial de Datos</a>
+        <a href="reportes.html" class="nav-item">Reportes</a>
+    </div>
+
+    <div class="sidebar-footer">
+        <div class="sidebar-divider"></div>
+        <small class="sidebar-label">Administracion</small>
+        <a href="configurar-sistema.html" class="nav-item">Configurar Sistema</a>
+        <a href="historial-configuracion.html" class="nav-item">Registro Config.</a>
+        <a href="gestion-permisos.html" class="nav-item active">Gestion de Permisos</a>
+    </div>
+</nav>
+
+<!--
+    ============================================================================
+    CONTENIDO PRINCIPAL DEL PANEL ADMINISTRATIVO
+    ============================================================================
+-->
+<main class="main-content">
+    <!-- Titulo y descripcion funcional de la pantalla. -->
+    <h1 class="page-title">Gestion de permisos</h1>
+    <p class="page-subtitle">Controla las cuentas internas del sistema, revisa que rol tiene cada una y ajusta el acceso segun el perfil operativo de cada usuario.</p>
+
+    <!--
+        INDICADORES RESUMEN
+        Los valores se inicializan a cero y JavaScript los recalcula a partir de
+        las cuentas recibidas desde el backend.
+    -->
+    <section class="summary-grid">
+        <article class="summary-card">
+            <div class="summary-label">Cuentas totales</div>
+            <div class="summary-value" id="summaryTotal">0</div>
+        </article>
+        <article class="summary-card">
+            <div class="summary-label">Administradores</div>
+            <div class="summary-value" id="summaryAdmins">0</div>
+        </article>
+        <article class="summary-card">
+            <div class="summary-label">Cuentas activas</div>
+            <div class="summary-value" id="summaryActive">0</div>
+        </article>
+    </section>
+
+    <section class="layout-grid">
+        <!--
+            LISTADO DE CUENTAS
+            El cuerpo de la tabla se genera dinamicamente y contiene las acciones
+            disponibles para cada cuenta.
+        -->
+        <article class="panel accounts-panel">
+            <h2 class="panel-title">Cuentas registradas</h2>
+            <div>
+                <table class="accounts-table">
+                    <thead>
+                        <tr>
+                            <th>Usuario</th>
+                            <th>Rol</th>
+                            <th>Estado</th>
+                            <th>Clave</th>
+                            <th>Alta</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="accountsTableBody">
+                        <tr><td colspan="6" class="text-muted">Cargando cuentas...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </article>
+
+        <!--
+            FORMULARIO DE CREACION
+            Permite dar de alta una nueva cuenta con usuario, contrasena provisional
+            y rol inicial.
+        -->
+        <aside class="panel create-panel">
+            <h2 class="panel-title">Nueva cuenta interna</h2>
+            <form id="createUserForm" class="form-grid">
+                <div class="field">
+                    <label for="newUsername">Usuario</label>
+                    <input id="newUsername" class="input-custom" type="text" required>
+                </div>
+
+                <div class="field">
+                    <label for="newPassword">Contrasena</label>
+                    <input id="newPassword" class="input-custom" type="password" minlength="6" required>
+                </div>
+
+                <div class="field">
+                    <label for="newRole">Rol</label>
+                    <!--
+                        El SELECT nativo mantiene el valor real del formulario.
+                        El contenedor situado a continuacion se utiliza para construir
+                        el selector visual personalizado mediante JavaScript.
+                    -->
+                    <select id="newRole" class="hidden-native-select">
+                        <option value="normal">Usuario</option>
+                        <option value="medio">Operario</option>
+                        <option value="administrador">Administrador</option>
+                    </select>
+                    <div class="role-select-shell" data-select-id="newRole"></div>
+                </div>
+
+                <!-- El envio del formulario ejecuta la funcion createAccount(). -->
+                <button type="submit" class="btn-primary-panel">Crear cuenta</button>
+                <div class="text-muted" style="font-size:12px; line-height:1.5;">La contrasena asignada aqui sera provisional. El usuario tendra que cambiarla en su primer acceso.</div>
+                <div id="createUserStatus" class="status-note"></div>
+            </form>
+        </aside>
+    </section>
+</main>
+
+<script>
+    /*
+     * ============================================================================
+     * LOGICA DEL PANEL DE GESTION DE PERMISOS
+     * ============================================================================
+     *
+     * Este bloque controla las operaciones administrativas relacionadas con las
+     * cuentas internas del sistema.
+     *
+     * Sus responsabilidades principales son:
+     * - Descargar y mantener en memoria la lista de cuentas.
+     * - Traducir los roles tecnicos a etiquetas legibles.
+     * - Representar roles y estados mediante clases CSS.
+     * - Construir selectores personalizados de rol.
+     * - Calcular los indicadores resumen.
+     * - Renderizar dinamicamente la tabla de usuarios.
+     * - Guardar modificaciones sobre cuentas existentes.
+     * - Crear nuevas cuentas internas.
+     * - Mostrar mensajes de confirmacion o error.
+     *
+     * La autorizacion de estas peticiones debe ser validada siempre por el backend,
+     * ya que la interfaz por si sola no constituye una medida de seguridad.
+     * ============================================================================
+     */
+
+    /*
+     * Determinacion de la URL base de la API.
+     *
+     * En un despliegue HTTP/HTTPS se utiliza el mismo origen desde el que se sirve
+     * la aplicacion. Si el archivo se abre directamente, se utiliza localhost:5000
+     * como direccion de desarrollo.
+     */
+    const API_BASE = window.location.protocol.startsWith('http')
+        ? window.location.origin
+        : 'http://localhost:5000';
+
+    /*
+     * Cache local de cuentas.
+     *
+     * El array almacena temporalmente la informacion recibida desde el backend.
+     * Su contenido se utiliza para generar la tabla y calcular los indicadores sin
+     * necesidad de repetir consultas para cada operacion de representacion.
+     */
+    let accounts = [];
+
+
+    /**
+     * Convierte el identificador tecnico de un rol en una etiqueta legible.
+     *
+     * El backend utiliza valores breves como "normal", "medio" y "administrador".
+     * Esta funcion los transforma en textos adecuados para mostrarlos al usuario.
+     *
+     * @param {string} role Identificador interno del rol.
+     * @returns {string} Nombre descriptivo del rol.
+     */
+    function roleLabel(role) {
+        if (role === 'administrador') return 'Administrador';
+        if (role === 'medio') return 'Usuario medio';
+
+        /*
+         * Cualquier valor no contemplado se representa como usuario normal.
+         * Este comportamiento actua como opcion visual por defecto.
+         */
+        return 'Usuario normal';
+    }
+
+
+    /**
+     * Obtiene la clase CSS asociada visualmente a un rol.
+     *
+     * La funcion separa la logica de clasificacion del aspecto visual, evitando
+     * repetir condiciones cada vez que se representa una cuenta.
+     *
+     * @param {string} role Identificador interno del rol.
+     * @returns {string} Clase CSS utilizada por el badge correspondiente.
+     */
+    function roleClass(role) {
+        if (role === 'administrador') return 'role-admin';
+        if (role === 'medio') return 'role-medio';
+
+        /* El estilo de usuario normal se utiliza como valor por defecto. */
+        return 'role-normal';
+    }
+
+
+    /**
+     * Muestra un mensaje de estado dentro de un elemento de la interfaz.
+     *
+     * Esta funcion se utiliza tanto para confirmar operaciones correctas como para
+     * informar de errores durante la creacion o modificacion de cuentas.
+     *
+     * @param {string} id Identificador del elemento que mostrara el mensaje.
+     * @param {string} message Texto que debe presentarse al usuario.
+     * @param {boolean} isError Indica si el mensaje corresponde a un error.
+     * @returns {void}
+     */
+    function setStatus(id, message, isError = false) {
+        /* Se obtiene el elemento encargado de presentar el resultado de la accion. */
+        const node = document.getElementById(id);
+
+        /* textContent evita interpretar el mensaje como contenido HTML. */
+        node.textContent = message;
+
+        /*
+         * El color permite diferenciar visualmente errores y operaciones correctas.
+         * Se reutilizan las variables definidas en la hoja de estilos.
+         */
+        node.style.color = isError
+            ? 'var(--accent-red)'
+            : 'var(--accent-green)';
+    }
+
+
+    /**
+     * Genera la estructura HTML necesaria para modificar el rol de una cuenta.
+     *
+     * Cada fila dispone de un SELECT nativo oculto y un contenedor utilizado para
+     * construir posteriormente el selector visual personalizado.
+     *
+     * El SELECT nativo conserva el valor real y simplifica la lectura posterior
+     * del rol seleccionado cuando el administrador guarda los cambios.
+     *
+     * @param {string} selectedRole Rol actualmente asignado a la cuenta.
+     * @param {number|string} userId Identificador unico de la cuenta.
+     * @returns {string} Fragmento HTML del selector de rol.
+     */
+    function buildRoleSelect(selectedRole, userId) {
+        /*
+         * Cada opcion incorpora el atributo selected cuando coincide con el rol
+         * actual. Los operadores ternarios permiten construir ese atributo de forma
+         * dinamica dentro de la plantilla HTML.
+         */
+        return `
+            <select class="hidden-native-select role-select" data-user-id="${userId}">
+                <option value="normal" ${selectedRole === 'normal' ? 'selected' : ''}>
+                    Usuario normal
+                </option>
+                <option value="medio" ${selectedRole === 'medio' ? 'selected' : ''}>
+                    Usuario medio
+                </option>
+                <option value="administrador" ${selectedRole === 'administrador' ? 'selected' : ''}>
+                    Administrador
+                </option>
+            </select>
+
+            <!--
+                data-native-selector almacena el selector que permite localizar el
+                SELECT real asociado a este componente visual.
+            -->
+            <div
+                class="role-select-shell"
+                data-native-selector=".role-select[data-user-id=&quot;${userId}&quot;]">
+            </div>
+        `;
+    }
+
+
+    /**
+     * Inicializa un selector visual de rol a partir de un SELECT HTML existente.
+     *
+     * El componente personalizado no sustituye funcionalmente al SELECT nativo,
+     * sino que actua como su representacion visual. Cada seleccion realizada por
+     * el usuario actualiza el selectedIndex del elemento original y dispara su
+     * evento change.
+     *
+     * Esta estrategia permite conservar un elemento de formulario estandar mientras
+     * se personaliza completamente su aspecto.
+     *
+     * @param {HTMLElement} wrapper Contenedor sobre el que se crea el selector.
+     * @returns {void}
+     */
+    function initRoleSelect(wrapper) {
+        /*
+         * Existen dos formas de localizar el SELECT asociado:
+         *
+         * - data-select-id se utiliza en el formulario de nueva cuenta.
+         * - data-native-selector se utiliza en los selectores creados dentro de
+         *   cada fila de la tabla.
+         */
+        const selectId = wrapper.dataset.selectId;
+        const selector = wrapper.dataset.nativeSelector;
+
+        /*
+         * Si existe un selector CSS especifico, el SELECT se busca dentro del
+         * elemento padre. En caso contrario se obtiene mediante su identificador.
+         */
+        const nativeSelect = selector
+            ? wrapper.parentElement.querySelector(selector)
+            : document.getElementById(selectId);
+
+        /*
+         * Si por cualquier motivo no existe un SELECT asociado, la inicializacion
+         * se cancela para evitar errores posteriores.
+         */
+        if (!nativeSelect) return;
+
+        /*
+         * Se construyen los dos elementos visibles del componente:
+         * - Boton que muestra la opcion seleccionada.
+         * - Menu que contiene las opciones disponibles.
+         */
+        wrapper.innerHTML = `
+            <button type="button" class="role-select-button"></button>
+            <div class="role-select-menu"></div>
+        `;
+
+        /* Referencias a los elementos recien creados. */
+        const button = wrapper.querySelector('.role-select-button');
+        const menu = wrapper.querySelector('.role-select-menu');
+
+
+        /**
+         * Sincroniza el texto del boton con la opcion seleccionada en el SELECT.
+         *
+         * La funcion se define internamente porque solo tiene utilidad dentro del
+         * selector que se esta inicializando.
+         *
+         * @returns {void}
+         */
+        function syncButton() {
+            /*
+             * selectedIndex indica la posicion de la opcion actualmente activa.
+             * A partir de ella se recupera el objeto OPTION correspondiente.
+             */
+            const selected = nativeSelect.options[nativeSelect.selectedIndex];
+
+            button.textContent = selected
+                ? selected.text
+                : 'Seleccionar rol';
+        }
+
+
+        /**
+         * Regenera las opciones visibles del menu personalizado.
+         *
+         * Cada OPTION del SELECT nativo se transforma en un boton. La opcion activa
+         * recibe una clase CSS diferente para reflejar el estado actual.
+         *
+         * @returns {void}
+         */
+        function renderOptions() {
+            /*
+             * Array.from() convierte la coleccion HTMLOptionsCollection en un array
+             * convencional que puede procesarse mediante map().
+             */
+            const options = Array.from(nativeSelect.options);
+
+            /*
+             * map() convierte cada OPTION en un boton y join('') concatena todos los
+             * fragmentos sin insertar separadores.
+             */
+            menu.innerHTML = options.map((option, index) => `
+                <button
+                    type="button"
+                    class="role-select-option ${index === nativeSelect.selectedIndex ? 'active' : ''}"
+                    data-index="${index}">
+                    ${option.text}
+                </button>
+            `).join('');
+
+            /*
+             * Como las opciones visibles acaban de ser generadas mediante innerHTML,
+             * se registran sus eventos de click despues de cada renderizado.
+             */
+            menu.querySelectorAll('.role-select-option').forEach(option => {
+                option.addEventListener('click', () => {
+                    /*
+                     * data-index se almacena como texto en el DOM, por lo que Number()
+                     * lo convierte nuevamente a numero antes de asignarlo.
+                     */
+                    nativeSelect.selectedIndex = Number(option.dataset.index);
+
+                    /*
+                     * Se dispara manualmente change para que cualquier logica asociada
+                     * al SELECT nativo reciba la modificacion realizada.
+                     */
+                    nativeSelect.dispatchEvent(
+                        new Event('change', { bubbles: true })
+                    );
+
+                    /* El boton y las opciones se sincronizan con el nuevo estado. */
+                    syncButton();
+                    renderOptions();
+
+                    /* El menu se cierra despues de seleccionar una opcion. */
+                    wrapper.classList.remove('open');
+                });
+            });
+        }
+
+
+        /*
+         * Al pulsar el boton principal se abre o cierra el menu personalizado.
+         */
+        button.addEventListener('click', (event) => {
+            /*
+             * stopPropagation() impide que este mismo click alcance inmediatamente
+             * el listener global del documento encargado de cerrar desplegables.
+             */
+            event.stopPropagation();
+
+            /*
+             * Antes de abrir el selector actual se cierran otros selectores que
+             * pudieran permanecer abiertos, evitando menus superpuestos.
+             */
+            document.querySelectorAll('.role-select-shell.open').forEach(shell => {
+                if (shell !== wrapper) {
+                    shell.classList.remove('open');
+                }
+            });
+
+            /*
+             * toggle() anade la clase si no existe y la elimina si ya estaba
+             * presente, alternando de este modo el estado abierto/cerrado.
+             */
+            wrapper.classList.toggle('open');
+
+            /*
+             * Las opciones se regeneran para garantizar que la opcion marcada como
+             * activa coincide con el valor actual del SELECT.
+             */
+            renderOptions();
+        });
+
+
+        /*
+         * Este listener global permite cerrar el desplegable cuando el usuario
+         * pulsa en cualquier punto exterior al componente.
+         */
+        document.addEventListener('click', (event) => {
+            if (!wrapper.contains(event.target)) {
+                wrapper.classList.remove('open');
+            }
+        });
+
+
+        /*
+         * Se incorpora al propio contenedor una funcion de refresco.
+         * De este modo, el componente puede volver a sincronizarse externamente si
+         * cambian las opciones o la seleccion del SELECT nativo.
+         */
+        wrapper.refreshOptions = () => {
+            syncButton();
+            renderOptions();
+        };
+
+        /* Se realiza la sincronizacion inicial del componente. */
+        syncButton();
+        renderOptions();
+    }
+
+
+    /**
+     * Recalcula los indicadores resumen del panel.
+     *
+     * Los valores se obtienen directamente del array accounts que contiene las
+     * cuentas descargadas desde el backend.
+     *
+     * @returns {void}
+     */
+    function refreshSummary() {
+        /* Numero total de cuentas almacenadas en memoria. */
+        document.getElementById('summaryTotal').textContent = accounts.length;
+
+        /*
+         * filter() conserva unicamente las cuentas cuyo rol es administrador y
+         * length obtiene el numero total de coincidencias.
+         */
+        document.getElementById('summaryAdmins').textContent =
+            accounts.filter(
+                account => account.role === 'administrador'
+            ).length;
+
+        /*
+         * Number() normaliza el campo active porque el backend puede devolverlo
+         * como numero o como valor convertible a numero.
+         */
+        document.getElementById('summaryActive').textContent =
+            accounts.filter(
+                account => Number(account.active) === 1
+            ).length;
+    }
+
+
+    /**
+     * Genera la tabla principal de cuentas y registra sus acciones interactivas.
+     *
+     * Cada fila muestra:
+     * - Nombre de usuario.
+     * - Rol actual.
+     * - Estado activo/inactivo.
+     * - Estado de la contrasena.
+     * - Fecha de alta.
+     * - Controles para modificar rol y activacion.
+     *
+     * Tras generar el HTML tambien se inicializan los selectores personalizados y
+     * se registran los listeners de los botones Guardar.
+     *
+     * @returns {void}
+     */
+    function renderAccounts() {
+        /* Se obtiene el cuerpo de la tabla que recibira las filas generadas. */
+        const tbody = document.getElementById('accountsTableBody');
+
+        /*
+         * Cuando no existen cuentas se muestra un mensaje informativo y se
+         * recalculan los indicadores para que reflejen valores iguales a cero.
+         */
+        if (!accounts.length) {
+            tbody.innerHTML =
+                '<tr><td colspan="6" class="text-muted">No hay cuentas disponibles.</td></tr>';
+
+            refreshSummary();
+            return;
+        }
+
+        /*
+         * Cada objeto del array accounts se transforma en una fila de tabla.
+         * join('') concatena todas las filas generadas sin separadores.
+         */
+        tbody.innerHTML = accounts.map(account => `
+            <tr>
+                <!-- Nombre unico utilizado para identificar la cuenta. -->
+                <td class="mono">${account.username}</td>
+
+                <!-- El rol se representa mediante texto y clase CSS calculados. -->
+                <td>
+                    <span class="role-badge ${roleClass(account.role)}">
+                        ${roleLabel(account.role)}
+                    </span>
+                </td>
+
+                <!--
+                    Number(account.active) === 1 normaliza el valor recibido antes
+                    de decidir tanto la clase visual como el texto mostrado.
+                -->
+                <td>
+                    <span class="state-badge ${Number(account.active) === 1 ? 'state-active' : 'state-off'}">
+                        ${Number(account.active) === 1 ? 'Activa' : 'Inactiva'}
+                    </span>
+                </td>
+
+                <!--
+                    must_change_password indica si la clave asignada continua siendo
+                    provisional y debe modificarse en el siguiente acceso.
+                -->
+                <td>
+                    <span class="state-badge ${Number(account.must_change_password) === 1 ? 'state-pending' : 'state-active'}">
+                        ${Number(account.must_change_password) === 1 ? 'Provisional' : 'Actualizada'}
+                    </span>
+                </td>
+
+                <!-- Si no existe fecha de alta se muestra "--". -->
+                <td>${account.created_at || '--'}</td>
+
+                <td>
+                    <div class="row-actions">
+                        <!-- Selector de rol generado especificamente para esta cuenta. -->
+                        ${buildRoleSelect(account.role, account.id)}
+
+                        <!--
+                            La casilla refleja el estado activo actual.
+                            data-user-id permite asociarla con la cuenta correcta.
+                        -->
+                        <label
+                            style="display:flex; align-items:center; gap:8px; color:var(--text-dim);">
+                            <input
+                                type="checkbox"
+                                class="active-toggle"
+                                data-user-id="${account.id}"
+                                ${Number(account.active) === 1 ? 'checked' : ''}>
+                            Activa
+                        </label>
+
+                        <!-- Boton que persiste los cambios de esta fila concreta. -->
+                        <button
+                            type="button"
+                            class="btn-secondary-panel save-account"
+                            data-user-id="${account.id}">
+                            Guardar
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `).join('');
+
+        /* Se actualizan los indicadores con el conjunto de cuentas representado. */
+        refreshSummary();
+
+        /*
+         * Los selectores de rol de las filas acaban de ser insertados mediante
+         * innerHTML, por lo que deben inicializarse despues de generar la tabla.
+         */
+        tbody
+            .querySelectorAll('.role-select-shell')
+            .forEach(initRoleSelect);
+
+        /*
+         * Se registra un listener independiente para el boton Guardar de cada fila.
+         */
+        tbody.querySelectorAll('.save-account').forEach(button => {
+            button.addEventListener('click', async () => {
+                /*
+                 * El identificador de usuario se recupera del atributo data-user-id
+                 * incluido al generar el boton.
+                 */
+                const userId = button.dataset.userId;
+
+                /*
+                 * Se localiza el SELECT nativo correspondiente a la misma cuenta y
+                 * se obtiene su valor actual.
+                 */
+                const role = tbody.querySelector(
+                    `.role-select[data-user-id="${userId}"]`
+                ).value;
+
+                /*
+                 * checked devuelve true o false segun el estado actual del checkbox.
+                 */
+                const active = tbody.querySelector(
+                    `.active-toggle[data-user-id="${userId}"]`
+                ).checked;
+
+                /*
+                 * Los valores seleccionados se envian a saveAccount() en un objeto
+                 * que constituira el cuerpo de la peticion PATCH.
+                 */
+                await saveAccount(userId, { role, active });
+            });
+        });
+    }
+
+
+    /**
+     * Descarga desde el backend la lista completa de cuentas administrables.
+     *
+     * Una vez recibida la respuesta, los datos sustituyen el contenido de accounts
+     * y se vuelve a representar la tabla.
+     *
+     * @returns {Promise<void>}
+     */
+    async function loadAccounts() {
+        try {
+            /*
+             * Se utiliza el endpoint administrativo destinado a consultar usuarios.
+             */
+            const response = await fetch(`${API_BASE}/api/admin/users`);
+
+            /*
+             * fetch() no genera automaticamente una excepcion ante respuestas HTTP
+             * como 404 o 500, por lo que se valida response.ok manualmente.
+             */
+            if (!response.ok) {
+                throw new Error();
+            }
+
+            /*
+             * El JSON devuelto por el servidor se convierte en objetos JavaScript
+             * y se almacena en la cache local.
+             */
+            accounts = await response.json();
+
+            /* Se genera de nuevo la tabla con la informacion recibida. */
+            renderAccounts();
+        } catch (error) {
+            /*
+             * Si falla la peticion se sustituye el estado de carga por un mensaje
+             * de error visible dentro de la propia tabla.
+             */
+            document.getElementById('accountsTableBody').innerHTML =
+                '<tr><td colspan="5" style="color:var(--accent-red);">No se pudieron cargar las cuentas.</td></tr>';
+        }
+    }
+
+
+    /**
+     * Guarda cambios de rol o estado activo sobre una cuenta existente.
+     *
+     * La funcion utiliza una peticion PATCH porque solamente se modifican
+     * determinadas propiedades del recurso existente.
+     *
+     * @param {number|string} userId Identificador de la cuenta que se actualiza.
+     * @param {Object} payload Propiedades modificadas de la cuenta.
+     * @returns {Promise<void>}
+     */
+    async function saveAccount(userId, payload) {
+        try {
+            /*
+             * La peticion utiliza Content-Type application/json para indicar que el
+             * cuerpo contiene un objeto JSON.
+             */
+            const response = await fetch(
+                `${API_BASE}/api/admin/users/${userId}`,
+                {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+
+                    /*
+                     * JSON.stringify() convierte el objeto JavaScript en texto JSON
+                     * para poder enviarlo en el cuerpo HTTP.
+                     */
+                    body: JSON.stringify(payload)
+                }
+            );
+
+            /*
+             * Se intenta leer la respuesta JSON antes de validar response.ok para
+             * poder utilizar el mensaje de error proporcionado por el backend.
+             */
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(
+                    result.error || 'No se pudo guardar la cuenta'
+                );
+            }
+
+            /* Se informa de que la modificacion ha finalizado correctamente. */
+            setStatus(
+                'createUserStatus',
+                'Cuenta actualizada correctamente.'
+            );
+
+            /*
+             * La lista completa se vuelve a solicitar despues de guardar para
+             * representar exactamente el estado persistido por el backend.
+             */
+            await loadAccounts();
+        } catch (error) {
+            /*
+             * Se prioriza el mensaje de la excepcion cuando existe; en caso
+             * contrario se utiliza un texto generico.
+             */
+            setStatus(
+                'createUserStatus',
+                error.message || 'No se pudo guardar la cuenta.',
+                true
+            );
+        }
+    }
+
+
+    /**
+     * Crea una nueva cuenta interna a partir de los datos del formulario.
+     *
+     * La funcion actua como manejador del evento submit. Primero evita el envio
+     * HTML tradicional, construye el objeto que representa la nueva cuenta y lo
+     * envia al backend mediante una peticion POST.
+     *
+     * La contrasena proporcionada se considera provisional segun el funcionamiento
+     * definido por el sistema y debera ser modificada posteriormente por el usuario.
+     *
+     * @param {SubmitEvent} event Evento submit generado por el formulario.
+     * @returns {Promise<void>}
+     */
+    async function createAccount(event) {
+        /*
+         * preventDefault() impide que el navegador envie el formulario de forma
+         * tradicional y recargue la pagina.
+         */
+        event.preventDefault();
+
+        /*
+         * Se construye el objeto enviado al backend a partir de los tres campos.
+         * trim() elimina espacios accidentales del principio y final del usuario.
+         */
+        const payload = {
+            username: document
+                .getElementById('newUsername')
+                .value
+                .trim(),
+
+            password: document
+                .getElementById('newPassword')
+                .value,
+
+            /*
+             * Aunque visualmente se utiliza un selector personalizado, el valor
+             * real permanece almacenado en el SELECT nativo newRole.
+             */
+            role: document
+                .getElementById('newRole')
+                .value
+        };
+
+        try {
+            /*
+             * POST se utiliza porque se esta creando un nuevo recurso dentro de la
+             * coleccion administrativa de usuarios.
+             */
+            const response = await fetch(
+                `${API_BASE}/api/admin/users`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                }
+            );
+
+            /*
+             * La respuesta se convierte a JSON para poder utilizar posibles mensajes
+             * de validacion devueltos por el servidor.
+             */
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(
+                    result.error || 'No se pudo crear la cuenta'
+                );
+            }
+
+            /*
+             * Una vez creada correctamente la cuenta se limpian los valores del
+             * formulario para dejarlo preparado para una nueva operacion.
+             */
+            document.getElementById('createUserForm').reset();
+
+            /* Se muestra una confirmacion al administrador. */
+            setStatus(
+                'createUserStatus',
+                'Cuenta creada correctamente. El usuario debera cambiar la contrasena al entrar.'
+            );
+
+            /*
+             * La tabla se recarga desde el backend para incluir inmediatamente la
+             * nueva cuenta y actualizar los indicadores superiores.
+             */
+            await loadAccounts();
+        } catch (error) {
+            /* Los errores de validacion o red se muestran en el mismo panel. */
+            setStatus(
+                'createUserStatus',
+                error.message || 'No se pudo crear la cuenta.',
+                true
+            );
+        }
+    }
+
+
+    /*
+     * ============================================================================
+     * REGISTRO DE EVENTOS E INICIALIZACION
+     * ============================================================================
+     */
+
+    /*
+     * El formulario de alta delega su evento submit en createAccount(), evitando
+     * el comportamiento HTML tradicional.
+     */
+    document
+        .getElementById('createUserForm')
+        .addEventListener('submit', createAccount);
+
+    /*
+     * Al finalizar la carga del documento se realizan dos operaciones:
+     *
+     * 1. Se inicializa el selector de rol del formulario de nueva cuenta.
+     * 2. Se solicita al backend la lista de cuentas existentes.
+     */
+    window.addEventListener('load', () => {
+        document
+            .querySelectorAll('.role-select-shell')
+            .forEach(initRoleSelect);
+
+        loadAccounts();
+    });
+</script>
+<!--
+    Script compartido encargado de gestionar el tema visual y mantener la apariencia
+    seleccionada de forma coherente con el resto de pantallas de S.M.I. CORE.
+-->
+<script src="theme.js"></script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: smi-core-tfg
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --workers 1 --bind 0.0.0.0:$PORT app:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: ENABLE_ARDUINO
+        value: "0"
+      - key: SIMULATE_ARDUINO
+        # Los diez nodos SIM_* siguen activos. Solo se impide inventar valores
+        # para FISICO_ARDUINO, que debe mostrar exclusivamente datos de la placa.
+        value: "0"
+      - key: DB_PATH
+        value: smi_core.db
+      - key: SECRET_KEY
+        sync: false
+      - key: AUTH_USERNAME
+        sync: false
+      - key: AUTH_PASSWORD
+        sync: false
+      - key: INGESTION_TOKEN
+        sync: false

@@ -1,0 +1,2042 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <!--
+        ============================================================================
+        ARCHIVO: historial.html
+        DESCRIPCION GENERAL
+        ============================================================================
+
+        Este archivo implementa la vista de historial de telemetria del sistema
+        S.M.I. CORE.
+
+        Su responsabilidad principal consiste en consultar y representar los
+        registros historicos almacenados por el nodo central, permitiendo analizar
+        la evolucion de las variables recogidas por los distintos nodos o sensores.
+
+        Para cada registro se muestran los siguientes datos:
+        - Identificador del registro.
+        - Fecha y hora de la lectura.
+        - Nodo que origino la medicion.
+        - Temperatura.
+        - Humedad.
+        - Nivel de ruido.
+        - Nivel de luz.
+        - Presion.
+        - Estado calculado de la lectura: NORMAL o ALERTA.
+
+        La vista permite consultar grandes cantidades de informacion de forma
+        controlada mediante paginacion. Cada peticion solicita al backend una pagina
+        concreta del historial y mantiene activos los filtros seleccionados.
+
+        Tambien se ofrecen distintas herramientas de filtrado:
+        - Rangos temporales rapidos de 15 minutos, 1 hora, 6 horas, 24 horas,
+          7 dias, 30 dias o todo el historial.
+        - Seleccion manual de fecha y hora inicial y final.
+        - Visualizacion de todos los registros o exclusivamente las alertas.
+        - Navegacion entre paginas manteniendo los filtros activos.
+
+        Para seleccionar fechas se utiliza la libreria Flatpickr, configurada con
+        formato de 24 horas y localizacion en espanol.
+
+        La clasificacion visual de una lectura como alerta se realiza en esta vista
+        comparando determinados valores de telemetria con los limites definidos en
+        la constante LIMITES.
+
+        La pantalla permite ademas exportar a CSV los registros que se encuentran
+        cargados en la pagina actual.
+
+        FLUJO GENERAL DE FUNCIONAMIENTO
+        --------------------------------
+        1. Al abrirse la pagina se inicializan los dos calendarios Flatpickr.
+        2. Se configura el selector visual que permite alternar entre todos los
+           registros y solamente las alertas.
+        3. Se establece inicialmente un rango temporal de las ultimas 24 horas.
+        4. Se realiza una peticion GET al endpoint /api/historial.
+        5. Los filtros y los datos de paginacion se incorporan como parametros de
+           consulta en la URL.
+        6. La respuesta recibida se almacena temporalmente en datosMostrados.
+        7. La tabla se genera dinamicamente a partir de los registros recibidos.
+        8. Cada lectura se compara con los limites definidos para determinar su
+           estado visual.
+        9. Los controles de paginacion permiten solicitar paginas anteriores o
+           posteriores manteniendo los filtros actuales.
+        10. La opcion de descarga genera un fichero CSV a partir de los datos
+            actualmente cargados.
+
+        El backend sigue siendo responsable de recuperar y filtrar los registros
+        persistidos. La interfaz se ocupa de construir los parametros de consulta,
+        representar la respuesta, clasificar visualmente los valores y gestionar la
+        interaccion del usuario.
+        ============================================================================
+    -->
+    <!-- Define la codificacion de caracteres utilizada por el documento. -->
+    <meta charset="UTF-8">
+
+    <!-- Permite que la interfaz se adapte correctamente al ancho del dispositivo. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Titulo mostrado en la pestana del navegador. -->
+    <title>S.M.I. CORE | Historial de Datos</title>
+
+    <!--
+        Se cargan las tipografias utilizadas en la interfaz.
+        Inter se emplea para textos generales y JetBrains Mono para valores de
+        telemetria, fechas e identificadores tecnicos.
+    -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+
+    <!-- Bootstrap aporta clases auxiliares reutilizadas en la maquetacion. -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!--
+        Hoja de estilos de Flatpickr, libreria empleada para seleccionar fechas
+        y horas en los filtros personalizados.
+    -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+
+    <!--
+        El tema visual se aplica antes de representar completamente la pagina.
+        Se recupera la preferencia almacenada y, si no existe, se utiliza el tema
+        oscuro como valor predeterminado.
+    -->
+    <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('smi-theme') || 'dark');</script>
+
+    <!-- Hoja de estilos compartida con el resto de vistas de S.M.I. CORE. -->
+    <link href="theme.css" rel="stylesheet">
+
+    <style>
+        /*
+         * =========================================================================
+         * VARIABLES GLOBALES DE ESTILO
+         * =========================================================================
+         * La paleta principal se centraliza mediante variables CSS para mantener
+         * una apariencia coherente y facilitar cambios futuros.
+         */
+        :root {
+            --bg-main: #0d1117;
+            --panel-bg: #161b22;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --border: #30363d;
+            --text-main: #e6edf3;
+            --text-dim: #7d8590;
+        }
+
+        /*
+         * =========================================================================
+         * CONFIGURACION GENERAL DE LA PAGINA
+         * =========================================================================
+         * La vista utiliza una distribucion horizontal compuesta por un menu
+         * lateral fijo y una zona principal de contenido.
+         */
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+        *, *::before, *::after { box-sizing: border-box; }
+        .text-muted { color: #9aa4b2 !important; }
+
+        /*
+         * =========================================================================
+         * MENU LATERAL
+         * =========================================================================
+         * En escritorio se mantiene fijo y conserva disponibles los accesos a las
+         * distintas secciones mientras se consulta el historial.
+         */
+        .sidebar {
+            width: 260px;
+            height: 100vh;
+            background: var(--panel-bg);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 30px 20px;
+            position: fixed;
+        }
+        .logo-box { margin-bottom: 40px; padding-left: 10px; }
+        .nav-list { flex-grow: 1; }
+        .nav-item {
+            padding: 10px 14px;
+            color: var(--text-dim);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            border-radius: 6px;
+            margin-bottom: 5px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+        .nav-item:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-main); }
+        .nav-item.active { background: rgba(88, 166, 255, 0.1); color: var(--accent-blue); border: 1px solid rgba(88, 166, 255, 0.2); }
+        .sidebar-divider { height: 1px; background: var(--border); margin: 15px 0; }
+        .sidebar-label { color: var(--text-dim); font-size: 9px; text-transform: uppercase; letter-spacing: 1px; padding-left: 14px; margin-bottom: 10px; display: block; }
+
+        /*
+         * =========================================================================
+         * CONTENIDO PRINCIPAL
+         * =========================================================================
+         * El margen izquierdo coincide con la anchura del menu lateral fijo.
+         * Flexbox permite que la tabla ocupe el espacio vertical restante.
+         */
+        .main-content {
+            margin-left: 260px;
+            padding: 40px;
+            flex-grow: 1;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .section-title { font-size: 1.25rem; font-weight: 700; color: var(--text-main); margin-bottom: 35px; }
+
+        /*
+         * =========================================================================
+         * BARRA DE FILTROS
+         * =========================================================================
+         * Agrupa los rangos rapidos, el modo de visualizacion, los calendarios y
+         * el boton de consulta personalizada.
+         */
+        .filter-bar {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            padding: 20px;
+            border-radius: 10px;
+            display: flex;
+            gap: 18px;
+            margin-bottom: 30px;
+            align-items: flex-end;
+            box-shadow: 0 10px 28px rgba(0,0,0,0.22);
+            flex-wrap: wrap;
+        }
+
+        .filter-group { display: flex; flex-direction: column; gap: 8px; }
+        .filter-group label {
+            color: var(--text-dim);
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .filter-group.compact { min-width: 220px; }
+
+        /*
+         * SELECTOR DE RANGO RAPIDO
+         * -------------------------------------------------------------------------
+         * Permite escoger intervalos temporales predefinidos sin introducir fechas
+         * manualmente.
+         */
+        .range-selector {
+            display: flex;
+            background: var(--bg-main);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            min-height: 42px;
+        }
+        .btn-range {
+            background: transparent;
+            border: none;
+            border-right: 1px solid var(--border);
+            color: var(--text-dim);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            padding: 0 12px;
+            cursor: pointer;
+            transition: 0.2s;
+            font-weight: 700;
+            min-height: 42px;
+        }
+        .btn-range:last-child { border-right: none; }
+        .btn-range:hover { color: var(--text-main); background: rgba(255,255,255,0.03); }
+        .btn-range.active { background: rgba(88, 166, 255, 0.12); color: var(--accent-blue); }
+
+        /*
+         * CONTENEDORES DE CONTROLES PERSONALIZADOS
+         * -------------------------------------------------------------------------
+         * select-shell encapsula el selector visual de estado e input-shell los
+         * campos de fecha empleados por Flatpickr.
+         */
+        .select-shell,
+        .input-shell {
+            position: relative;
+            min-width: 210px;
+        }
+
+        .select-shell::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            right: 16px;
+            width: 9px;
+            height: 9px;
+            border-right: 2px solid #a7b7ca;
+            border-bottom: 2px solid #a7b7ca;
+            transform: translateY(-65%) rotate(45deg);
+            pointer-events: none;
+            transition: transform 0.2s ease;
+        }
+        .select-shell.open::after {
+            transform: translateY(-35%) rotate(225deg);
+        }
+
+        .input-shell::before {
+            content: "";
+            position: absolute;
+            top: 50%;
+            right: 14px;
+            transform: translateY(-50%);
+            width: 16px;
+            height: 16px;
+            border: 1.8px solid #c8d2de;
+            border-radius: 4px;
+            box-shadow: inset 0 -2px 0 rgba(200, 210, 222, 0.35);
+            pointer-events: none;
+            opacity: 1;
+        }
+        .input-shell::after {
+            content: "";
+            position: absolute;
+            top: calc(50% - 5px);
+            right: 18px;
+            width: 8px;
+            height: 2px;
+            background: #c8d2de;
+            border-radius: 999px;
+            pointer-events: none;
+            box-shadow:
+                0 -4px 0 0 #c8d2de,
+                0 6px 0 0 rgba(0,0,0,0),
+                -4px -4px 0 -1px #c8d2de,
+                4px -4px 0 -1px #c8d2de;
+        }
+
+        /*
+         * El SELECT HTML conserva el valor real del filtro, aunque se mantiene
+         * oculto porque la interaccion se realiza mediante un selector visual
+         * personalizado.
+         */
+        .native-filter-select {
+            display: none;
+        }
+
+        .custom-select-btn,
+        .input-history,
+        .flatpickr-input {
+            width: 100%;
+            height: 44px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.015) 100%), var(--bg-main);
+            color: var(--text-main);
+            padding: 0 42px 0 14px;
+            font-size: 13px;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+        }
+        .custom-select-btn:hover,
+        .input-history:hover,
+        .flatpickr-input:hover {
+            border-color: #4b5563;
+        }
+        .custom-select-btn:focus,
+        .input-history:focus,
+        .flatpickr-input:focus {
+            outline: none;
+            border-color: rgba(88, 166, 255, 0.55);
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.12);
+        }
+
+        .custom-select-btn {
+            text-align: left;
+            font-weight: 600;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+        }
+
+        .input-history,
+        .flatpickr-input {
+            font-family: 'JetBrains Mono', monospace;
+            letter-spacing: 0.01em;
+        }
+
+        /*
+         * Menu desplegable asociado al selector personalizado de registros.
+         * Solo se muestra cuando select-shell incorpora la clase "open".
+         */
+        .custom-select-menu {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            right: 0;
+            z-index: 120;
+            background: #11161d;
+            border: 1px solid #30363d;
+            border-radius: 14px;
+            padding: 8px;
+            box-shadow: 0 18px 36px rgba(0,0,0,0.36);
+            display: none;
+        }
+        .select-shell.open .custom-select-menu {
+            display: block;
+        }
+
+        .custom-select-option {
+            width: 100%;
+            border: none;
+            background: transparent;
+            color: #dce6f2;
+            border-radius: 10px;
+            padding: 11px 12px;
+            text-align: left;
+            font-size: 13px;
+            font-weight: 600;
+            transition: background 0.18s ease, color 0.18s ease;
+        }
+        .custom-select-option:hover {
+            background: rgba(88, 166, 255, 0.1);
+            color: #ffffff;
+        }
+        .custom-select-option.active {
+            background: linear-gradient(180deg, rgba(47,129,247,0.96) 0%, rgba(31,111,235,0.96) 100%);
+            color: #ffffff;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+        }
+
+        .filter-spacer {
+            flex-grow: 1;
+            text-align: right;
+            color: var(--text-dim);
+            font-size: 11px;
+            margin-bottom: 8px;
+        }
+
+        .btn-factory {
+            background: #21262d;
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            font-size: 12px;
+            font-weight: 700;
+            padding: 10px 16px;
+            border-radius: 10px;
+            transition: 0.2s;
+            cursor: pointer;
+        }
+        .btn-factory:hover { background: #30363d; }
+
+        /*
+         * =========================================================================
+         * CONTENEDOR DE LA TABLA
+         * =========================================================================
+         * La tabla ocupa el espacio disponible y dispone de desplazamiento vertical
+         * independiente cuando el numero de filas supera el area visible.
+         */
+        .table-container {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow-y: auto;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+        .table-container::-webkit-scrollbar { width: 8px; height: 8px; }
+        .table-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+        /*
+         * La cabecera permanece fija durante el desplazamiento vertical para que
+         * las magnitudes de cada columna sigan siendo identificables.
+         */
+        table { width: 100%; border-collapse: collapse; }
+        th {
+            background: var(--panel-bg);
+            color: var(--text-dim);
+            text-align: left;
+            padding: 12px 16px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            border-bottom: 2px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        td {
+            padding: 12px 16px;
+            border-bottom: 1px solid rgba(48, 54, 61, 0.5);
+            color: var(--text-main);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+        }
+        tr:hover { background-color: rgba(255,255,255,0.02); }
+
+        /*
+         * ETIQUETAS DE ESTADO
+         * -------------------------------------------------------------------------
+         * Los registros normales y las alertas reciben estilos visuales distintos.
+         */
+        .status-badge {
+            font-size: 10px;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-weight: 700;
+            font-family: 'Inter', sans-serif;
+        }
+        .bg-ok { background: rgba(63, 185, 80, 0.15); color: var(--accent-green); border: 1px solid rgba(63, 185, 80, 0.2); }
+        .bg-err { background: rgba(248, 81, 73, 0.15); color: var(--accent-red); border: 1px solid rgba(248, 81, 73, 0.2); }
+        .text-rojo { color: var(--accent-red) !important; font-weight: 700; }
+
+        /*
+         * =========================================================================
+         * PAGINACION
+         * =========================================================================
+         * Presenta el numero de filas visibles, la pagina actual y los controles
+         * para solicitar la pagina anterior o siguiente.
+         */
+        .pagination-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-top: 16px;
+            flex-wrap: wrap;
+        }
+        .pagination-info {
+            color: var(--text-dim);
+            font-size: 12px;
+        }
+        .pagination-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .pagination-page {
+            min-width: 108px;
+            text-align: center;
+            color: var(--text-main);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+        }
+        .btn-factory[disabled] {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        /*
+         * =========================================================================
+         * PERSONALIZACION DE FLATPICKR - TEMA OSCURO
+         * =========================================================================
+         * Se adapta el calendario externo a la identidad visual de S.M.I. CORE.
+         */
+        .flatpickr-calendar {
+            background: #161b22;
+            border: 1px solid #2f3843;
+            border-radius: 16px;
+            box-shadow: 0 22px 40px rgba(0,0,0,0.38);
+            overflow: hidden;
+        }
+        .flatpickr-months {
+            background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%);
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            padding-top: 6px;
+        }
+        .flatpickr-current-month {
+            padding-top: 8px;
+            font-size: 18px;
+            font-weight: 700;
+        }
+        .flatpickr-current-month .flatpickr-monthDropdown-months,
+        .flatpickr-current-month input.cur-year,
+        .flatpickr-months .flatpickr-month,
+        .flatpickr-weekdays,
+        span.flatpickr-weekday,
+        .flatpickr-time input,
+        .flatpickr-time .flatpickr-time-separator,
+        .flatpickr-time .flatpickr-am-pm,
+        .flatpickr-day {
+            color: #e6edf3;
+            fill: #e6edf3;
+        }
+        .flatpickr-current-month .flatpickr-monthDropdown-months:hover,
+        .flatpickr-current-month input.cur-year:hover {
+            background: rgba(88,166,255,0.08);
+            border-radius: 8px;
+        }
+        .flatpickr-weekdays { background: transparent; }
+        span.flatpickr-weekday {
+            font-size: 12px;
+            font-weight: 700;
+            opacity: 0.92;
+        }
+        .flatpickr-days { padding: 2px 0 8px; }
+        .flatpickr-day {
+            border-radius: 999px;
+            max-width: 38px;
+            height: 38px;
+            line-height: 38px;
+            font-weight: 600;
+        }
+        .flatpickr-day.flatpickr-disabled,
+        .flatpickr-day.prevMonthDay,
+        .flatpickr-day.nextMonthDay {
+            color: #697587;
+        }
+        .flatpickr-day.today {
+            border-color: rgba(88, 166, 255, 0.7);
+            color: #eef5ff;
+        }
+        .flatpickr-day.selected,
+        .flatpickr-day.startRange,
+        .flatpickr-day.endRange,
+        .flatpickr-day.selected:hover,
+        .flatpickr-day.startRange:hover,
+        .flatpickr-day.endRange:hover {
+            background: linear-gradient(180deg, #2f81f7 0%, #1f6feb 100%);
+            border-color: #2f81f7;
+            color: #ffffff;
+        }
+        .flatpickr-day.today:hover,
+        .flatpickr-day:hover {
+            background: rgba(88,166,255,0.1);
+        }
+        .flatpickr-months .flatpickr-prev-month,
+        .flatpickr-months .flatpickr-next-month {
+            padding: 8px 12px;
+        }
+        .flatpickr-months .flatpickr-prev-month svg,
+        .flatpickr-months .flatpickr-next-month svg {
+            width: 15px;
+            height: 15px;
+            fill: #c9d6e4;
+        }
+        .flatpickr-months .flatpickr-prev-month:hover svg,
+        .flatpickr-months .flatpickr-next-month:hover svg {
+            fill: #58a6ff;
+        }
+        .flatpickr-time {
+            border-top: 1px solid rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.02);
+            height: 46px;
+        }
+        .flatpickr-time .numInputWrapper {
+            background: #263241;
+        }
+        .flatpickr-time .numInputWrapper span {
+            border-left: 1px solid rgba(255,255,255,0.12);
+            width: 28px;
+            background: #314055;
+            overflow: visible;
+        }
+        .flatpickr-time .numInputWrapper span.arrowUp::after {
+            border-bottom-color: #ffffff;
+            border-width: 0 4px 5px 4px;
+            top: 5px;
+        }
+        .flatpickr-time .numInputWrapper span.arrowDown::after {
+            border-top-color: #ffffff;
+            border-width: 5px 4px 0 4px;
+            top: auto;
+            bottom: 5px;
+        }
+        .flatpickr-time .numInputWrapper:hover,
+        .flatpickr-time .numInputWrapper span:hover {
+            background: #3a4e68;
+        }
+        .flatpickr-time .flatpickr-time-separator {
+            color: #f4f8fc;
+            font-weight: 700;
+        }
+        .flatpickr-time input:hover,
+        .flatpickr-time .flatpickr-am-pm:hover,
+        .flatpickr-time input:focus,
+        .flatpickr-time .flatpickr-am-pm:focus,
+        .flatpickr-time .numInputWrapper span:hover {
+            background: rgba(88,166,255,0.12);
+        }
+
+        /*
+         * =========================================================================
+         * ADAPTACION AL TEMA CLARO
+         * =========================================================================
+         * Estas reglas sobrescriben los colores de los controles personalizados y
+         * de Flatpickr cuando el documento utiliza data-theme="light".
+         */
+        :root[data-theme="light"] .custom-select-btn,
+        :root[data-theme="light"] .input-history,
+        :root[data-theme="light"] .flatpickr-input {
+            background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+            border-color: #d5e1ee;
+            color: #142133;
+        }
+        :root[data-theme="light"] .custom-select-btn:hover,
+        :root[data-theme="light"] .input-history:hover,
+        :root[data-theme="light"] .flatpickr-input:hover {
+            border-color: #97b8df;
+        }
+        :root[data-theme="light"] .select-shell::after {
+            border-right-color: #5d6d80;
+            border-bottom-color: #5d6d80;
+        }
+        :root[data-theme="light"] .input-shell::before {
+            border-color: #5d6d80;
+            box-shadow: inset 0 -2px 0 rgba(93, 109, 128, 0.22);
+        }
+        :root[data-theme="light"] .input-shell::after {
+            background: #5d6d80;
+            box-shadow:
+                0 -4px 0 0 #5d6d80,
+                0 6px 0 0 rgba(0,0,0,0),
+                -4px -4px 0 -1px #5d6d80,
+                4px -4px 0 -1px #5d6d80;
+        }
+        :root[data-theme="light"] .custom-select-menu {
+            background: #ffffff;
+            border-color: #d5e1ee;
+            box-shadow: 0 16px 30px rgba(20,33,51,0.14);
+        }
+        :root[data-theme="light"] .custom-select-option {
+            color: #142133;
+        }
+        :root[data-theme="light"] .custom-select-option:hover {
+            background: rgba(31,102,209,0.08);
+            color: #142133;
+        }
+        :root[data-theme="light"] .flatpickr-calendar {
+            background: #ffffff;
+            border-color: #d5e1ee;
+            box-shadow: 0 16px 30px rgba(20,33,51,0.16);
+        }
+        :root[data-theme="light"] .flatpickr-months {
+            background: linear-gradient(180deg, rgba(31,102,209,0.04) 0%, rgba(255,255,255,0.9) 100%);
+            border-bottom-color: #e3edf7;
+        }
+        :root[data-theme="light"] .flatpickr-current-month .flatpickr-monthDropdown-months,
+        :root[data-theme="light"] .flatpickr-current-month input.cur-year,
+        :root[data-theme="light"] .flatpickr-months .flatpickr-month,
+        :root[data-theme="light"] .flatpickr-weekdays,
+        :root[data-theme="light"] span.flatpickr-weekday,
+        :root[data-theme="light"] .flatpickr-time input,
+        :root[data-theme="light"] .flatpickr-time .flatpickr-time-separator,
+        :root[data-theme="light"] .flatpickr-time .flatpickr-am-pm,
+        :root[data-theme="light"] .flatpickr-day {
+            color: #142133;
+            fill: #142133;
+        }
+        :root[data-theme="light"] .flatpickr-day.flatpickr-disabled,
+        :root[data-theme="light"] .flatpickr-day.prevMonthDay,
+        :root[data-theme="light"] .flatpickr-day.nextMonthDay {
+            color: #9aa9bb;
+        }
+        :root[data-theme="light"] .flatpickr-day.selected,
+        :root[data-theme="light"] .flatpickr-day.startRange,
+        :root[data-theme="light"] .flatpickr-day.endRange,
+        :root[data-theme="light"] .flatpickr-day.selected:hover,
+        :root[data-theme="light"] .flatpickr-day.startRange:hover,
+        :root[data-theme="light"] .flatpickr-day.endRange:hover {
+            background: linear-gradient(180deg, #3277df 0%, #1f66d1 100%);
+            border-color: #3277df;
+            color: #ffffff;
+        }
+        :root[data-theme="light"] .flatpickr-time {
+            border-top-color: #e3edf7;
+            background: #f8fbff;
+        }
+        :root[data-theme="light"] .flatpickr-time .numInputWrapper {
+            background: #dfe9f5;
+        }
+        :root[data-theme="light"] .flatpickr-time .numInputWrapper span {
+            border-left-color: #c7d7ea;
+            background: #edf4fb;
+        }
+        :root[data-theme="light"] .flatpickr-time .numInputWrapper span.arrowUp::after {
+            border-bottom-color: #1f3550;
+        }
+        :root[data-theme="light"] .flatpickr-time .numInputWrapper span.arrowDown::after {
+            border-top-color: #1f3550;
+        }
+        :root[data-theme="light"] .flatpickr-time .numInputWrapper:hover,
+        :root[data-theme="light"] .flatpickr-time .numInputWrapper span:hover {
+            background: #d4e3f3;
+        }
+        :root[data-theme="light"] .flatpickr-time .flatpickr-time-separator {
+            color: #1f3550;
+        }
+        :root[data-theme="light"] .flatpickr-time input:hover,
+        :root[data-theme="light"] .flatpickr-time .flatpickr-am-pm:hover,
+        :root[data-theme="light"] .flatpickr-time input:focus,
+        :root[data-theme="light"] .flatpickr-time .flatpickr-am-pm:focus,
+        :root[data-theme="light"] .flatpickr-time .numInputWrapper span:hover,
+        :root[data-theme="light"] .flatpickr-day:hover {
+            background: rgba(31,102,209,0.08);
+        }
+
+        /*
+         * =========================================================================
+         * DISENO RESPONSIVE PARA TABLETS
+         * =========================================================================
+         * El menu deja de ser lateral, los filtros pasan a ocupar todo el ancho y
+         * la tabla se adapta al espacio disponible.
+         */
+        @media (max-width: 980px) {
+            body { display: block; height: auto; overflow: auto; }
+            .sidebar {
+                position: static;
+                width: 100%;
+                max-width: 100%;
+                height: auto;
+                padding: 18px;
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+            }
+            .logo-box { margin-bottom: 18px; padding-left: 0; }
+            .nav-list, .sidebar-footer {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 8px;
+            }
+            .nav-item { margin-bottom: 0; min-height: 42px; }
+            .main-content { margin-left: 0; padding: 24px; }
+            .filter-bar { gap: 14px; align-items: stretch; }
+            .filter-group { width: 100%; }
+            .range-selector { width: 100%; flex-wrap: wrap; height: auto; }
+            .btn-range { min-width: 54px; }
+            .select-shell, .input-shell, .filter-group.compact { width: 100%; min-width: 0; }
+            .table-container { max-height: none; overflow-x: hidden; }
+            table { min-width: 0; table-layout: fixed; }
+            .filter-spacer { width: 100%; text-align: left; margin-bottom: 0; }
+        }
+
+        /*
+         * =========================================================================
+         * DISENO RESPONSIVE PARA MOVILES
+         * =========================================================================
+         * Se simplifica la tabla ocultando columnas secundarias para priorizar
+         * fecha, nodo, temperatura y estado.
+         */
+        @media (max-width: 560px) {
+            .main-content { padding: 18px 14px; }
+            .sidebar { position: sticky; top: 0; z-index: 1000; padding: 12px; }
+            .logo-box { margin-bottom: 10px; }
+            .nav-list, .sidebar-footer {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
+                overflow-x: hidden;
+                gap: 8px;
+                padding-bottom: 4px;
+                scrollbar-width: none;
+            }
+            .nav-list::-webkit-scrollbar, .sidebar-footer::-webkit-scrollbar { display: none; }
+            .sidebar-footer { margin-top: 8px; }
+            .sidebar-footer > div, .sidebar-label { display: none; }
+            .nav-item { min-width: 0; min-height: 36px; white-space: normal; overflow-wrap: anywhere; justify-content: center; text-align: center; padding: 8px 12px; font-size: 13px; }
+            .d-flex.justify-content-between { flex-direction: column; align-items: stretch !important; gap: 12px; }
+            .btn-factory { width: 100%; margin-left: 0 !important; }
+            .filter-bar { padding: 14px; }
+            th, td { padding: 9px 7px; font-size: 11px; }
+            /*
+             * En telefonos se ocultan ID, humedad, ruido, luz y presion.
+             * Se mantienen las columnas consideradas esenciales para una consulta
+             * rapida: fecha, nodo, temperatura y estado.
+             */
+            th:nth-child(1), td:nth-child(1),
+            th:nth-child(5), td:nth-child(5),
+            th:nth-child(6), td:nth-child(6),
+            th:nth-child(7), td:nth-child(7),
+            th:nth-child(8), td:nth-child(8) { display: none; }
+            th:nth-child(2), td:nth-child(2) { width: 38%; }
+            th:nth-child(3), td:nth-child(3) { width: 32%; overflow-wrap: anywhere; }
+            th:nth-child(4), td:nth-child(4),
+            th:nth-child(9), td:nth-child(9) { width: 15%; }
+        }
+    </style>
+</head>
+<body>
+
+<!--
+    ============================================================================
+    NAVEGACION PRINCIPAL
+    ============================================================================
+    La barra lateral permite acceder al resto de modulos. La opcion Historial de
+    Datos se marca como activa para identificar la vista actual.
+-->
+<nav class="sidebar">
+    <div class="logo-box">
+        <h5 class="text-white fw-bold mb-0">S.M.I. <span style="color:var(--accent-blue)">CORE</span></h5>
+        <small class="text-muted" style="font-size: 10px; font-family: 'JetBrains Mono';">VER. 2.6.0-STABLE</small>
+    </div>
+
+        <div class="nav-list">
+        <a href="index.html" class="nav-item">Dashboard Vivo</a>
+        <a href="mapa.html" class="nav-item">Mapa de Planta</a>
+        <a href="mantenimiento.html" class="nav-item">Analisis por Zonas</a>
+        <a href="historial.html" class="nav-item active">Historial de Datos</a>
+        <a href="reportes.html" class="nav-item">Reportes</a>
+    </div>
+    <div class="sidebar-footer">
+        <div class="sidebar-divider"></div>
+        <small class="sidebar-label">Administracion</small>
+        <a href="configurar-sistema.html" class="nav-item">Configurar Sistema</a>
+        <a href="historial-configuracion.html" class="nav-item">Registro Config.</a>
+    </div>
+</nav>
+
+<!--
+    ============================================================================
+    CONTENIDO PRINCIPAL DEL HISTORIAL
+    ============================================================================
+-->
+<main class="main-content">
+
+    <!--
+        CABECERA DE LA VISTA
+        Incluye el titulo, el refresco manual de datos y la exportacion CSV.
+    -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h4 class="section-title" style="margin-bottom: 5px;">Historial de Telemetria</h4>
+            <p class="text-muted small">Registros historicos almacenados en el nodo central.</p>
+        </div>
+        <div>
+            <button class="btn-factory" onclick="cargarHistorial()">Forzar refresco</button>
+            <button class="btn-factory" style="margin-left: 10px; border-color: var(--accent-blue); color: var(--accent-blue);" onclick="descargarCSV()">Descargar CSV</button>
+        </div>
+    </div>
+
+    <!--
+        ============================================================================
+        CONTROLES DE FILTRADO
+        ============================================================================
+        Los filtros permiten establecer el intervalo temporal y decidir si deben
+        mostrarse todos los registros o solamente aquellos considerados alertas.
+    -->
+    <div class="filter-bar">
+        <!-- Seleccion de intervalos temporales predefinidos. -->
+        <div class="filter-group">
+            <label>Rango rapido</label>
+            <div class="range-selector">
+                <button class="btn-range" onclick="seleccionarRango('15m', this)">15M</button>
+                <button class="btn-range" onclick="seleccionarRango('1h', this)">1H</button>
+                <button class="btn-range" onclick="seleccionarRango('6h', this)">6H</button>
+                <button class="btn-range" onclick="seleccionarRango('24h', this)">24H</button>
+                <button class="btn-range" onclick="seleccionarRango('7d', this)">7D</button>
+                <button class="btn-range" onclick="seleccionarRango('30d', this)">30D</button>
+                <button class="btn-range" onclick="seleccionarRango('all', this)">TODO</button>
+            </div>
+        </div>
+
+        <!--
+            Selector visual que permite alternar entre todos los registros y las
+            alertas. El SELECT oculto conserva el valor real utilizado por el codigo.
+        -->
+        <div class="filter-group">
+            <label>Mostrar</label>
+            <div class="select-shell" id="mostrar-shell">
+                <select id="filtro-estado" class="native-filter-select">
+                    <option value="todos">Todos los registros</option>
+                    <option value="alertas">Solo alertas</option>
+                </select>
+                <button type="button" class="custom-select-btn" id="mostrar-select-btn" aria-expanded="false">Todos los registros</button>
+                <div class="custom-select-menu" id="mostrar-select-menu">
+                    <button type="button" class="custom-select-option active" data-value="todos">Todos los registros</button>
+                    <button type="button" class="custom-select-option" data-value="alertas">Solo alertas</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Fecha y hora inicial del rango personalizado. -->
+        <div class="filter-group compact">
+            <label>Desde</label>
+            <div class="input-shell">
+                <input type="text" id="fecha-desde" class="input-history" placeholder="Selecciona fecha y hora">
+            </div>
+        </div>
+
+        <!-- Fecha y hora final del rango personalizado. -->
+        <div class="filter-group compact">
+            <label>Hasta</label>
+            <div class="input-shell">
+                <input type="text" id="fecha-hasta" class="input-history" placeholder="Selecciona fecha y hora">
+            </div>
+        </div>
+
+        <div class="filter-group">
+            <label>Accion</label>
+            <button class="btn-factory" onclick="aplicarRangoPersonalizado()">Consultar</button>
+        </div>
+
+        <div class="filter-spacer">
+            <span id="contador-registros">0</span> registros mostrados
+        </div>
+    </div>
+
+    <!--
+        ============================================================================
+        TABLA DE TELEMETRIA
+        ============================================================================
+        El cuerpo se genera dinamicamente a partir de la pagina recibida desde la
+        API. Hasta que finaliza la primera consulta se muestra un mensaje de carga.
+    -->
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID_REG</th>
+                    <th>FECHA / HORA</th>
+                    <th>NODO ORIGEN</th>
+                    <th>TEMPERATURA</th>
+                    <th>HUMEDAD</th>
+                    <th>RUIDO</th>
+                    <th>LUZ</th>
+                    <th>PRESION</th>
+                    <th>ESTADO</th>
+                </tr>
+            </thead>
+            <tbody id="tabla-body">
+                <tr>
+                    <td colspan="9" style="text-align: center; color: var(--text-dim); padding: 30px;">Conectando con la base de datos...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    <!--
+        CONTROLES DE PAGINACION
+        JavaScript actualiza el texto y habilita o deshabilita los botones segun la
+        informacion devuelta por el backend.
+    -->
+    <div class="pagination-bar">
+        <div class="pagination-info" id="pagination-info">Cargando pagina...</div>
+        <div class="pagination-actions">
+            <button class="btn-factory" id="prev-page-btn" onclick="cambiarPagina(-1)">Anterior</button>
+            <div class="pagination-page" id="pagination-page">Pagina 1 / 1</div>
+            <button class="btn-factory" id="next-page-btn" onclick="cambiarPagina(1)">Siguiente</button>
+        </div>
+    </div>
+</main>
+
+<!-- Libreria utilizada para los selectores de fecha y hora. -->
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+
+<!-- Traduccion al espanol utilizada por los calendarios Flatpickr. -->
+<script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/es.js"></script>
+<script>
+    /*
+     * ============================================================================
+     * LOGICA DEL HISTORIAL DE TELEMETRIA
+     * ============================================================================
+     *
+     * Este bloque se encarga de:
+     * - Construir las consultas dirigidas al endpoint de historial.
+     * - Gestionar filtros temporales y de alertas.
+     * - Mantener el estado de paginacion.
+     * - Representar los registros recibidos.
+     * - Identificar visualmente lecturas que superan determinados limites.
+     * - Exportar a CSV los datos actualmente cargados.
+     * - Inicializar los calendarios Flatpickr.
+     * - Gestionar el selector personalizado de tipo de registros.
+     * ============================================================================
+     */
+
+
+    /*
+     * LIMITES UTILIZADOS PARA LA CLASIFICACION VISUAL DE LAS LECTURAS.
+     *
+     * Estos valores se emplean en el frontend para decidir si una medicion debe
+     * representarse como NORMAL o ALERTA:
+     *
+     * - temp: temperatura maxima.
+     * - hum: humedad maxima.
+     * - min_hum: humedad minima.
+     * - sonido: nivel maximo de sonido.
+     */
+    const LIMITES = {
+        temp: 35,
+        hum: 80,
+        min_hum: 20,
+        sonido: 85
+    };
+
+
+    /*
+     * URL BASE DE LA API.
+     *
+     * Cuando la vista se sirve mediante HTTP o HTTPS se utiliza el mismo origen de
+     * la pagina. Si se abre directamente como archivo local, se emplea
+     * localhost:5000 como direccion de desarrollo.
+     */
+    const API_BASE = window.location.protocol.startsWith('http')
+        ? window.location.origin
+        : 'http://localhost:5000';
+
+
+    /*
+     * ============================================================================
+     * VARIABLES DE ESTADO DE LA VISTA
+     * ============================================================================
+     */
+
+    /*
+     * Almacena los registros que corresponden a la pagina actualmente cargada.
+     * Este array se utiliza tanto para representar la tabla como para generar CSV.
+     */
+    let datosMostrados = [];
+
+    /*
+     * Referencias a las dos instancias Flatpickr.
+     * Inicialmente son null porque los calendarios se crean al cargar la pagina.
+     */
+    let pickerDesde = null;
+    let pickerHasta = null;
+
+    /* Numero de pagina solicitada actualmente al backend. */
+    let paginaActual = 1;
+
+    /* Numero total de paginas comunicado por la API. */
+    let totalPaginas = 1;
+
+    /* Numero total de registros que cumplen los filtros aplicados. */
+    let totalRegistros = 0;
+
+    /*
+     * Cantidad maxima de registros solicitados al backend en cada pagina.
+     * La paginacion evita descargar todo el historial en una unica peticion.
+     */
+    const PAGE_SIZE = 200;
+
+
+    /**
+     * Convierte un objeto Date al formato utilizado por los filtros del historial.
+     *
+     * La fecha resultante sigue el formato:
+     * YYYY-MM-DD HH:mm
+     *
+     * @param {Date} date Fecha que se desea convertir.
+     * @returns {string} Fecha y hora con el formato utilizado por la API.
+     */
+    function toDatetimeLocalValue(date) {
+        /*
+         * Esta funcion auxiliar garantiza que cada componente numerico tenga dos
+         * digitos, anadiendo un cero a la izquierda cuando sea necesario.
+         */
+        const pad = (value) => String(value).padStart(2, '0');
+
+        /*
+         * getMonth() utiliza indices entre 0 y 11, por lo que se suma una unidad
+         * antes de incorporar el mes al texto final.
+         */
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
+
+    /**
+     * Obtiene el modo de visualizacion seleccionado por el usuario.
+     *
+     * El SELECT nativo se encuentra oculto visualmente, pero conserva el valor real
+     * utilizado por la logica de filtrado.
+     *
+     * @returns {string} "todos" para todos los registros o "alertas" para alertas.
+     */
+    function obtenerModoAlerta() {
+        return document.getElementById('filtro-estado').value;
+    }
+
+
+    /**
+     * Solicita al backend una pagina del historial aplicando los filtros actuales.
+     *
+     * La funcion construye dinamicamente los parametros de la URL:
+     * - page: pagina solicitada.
+     * - page_size: numero maximo de filas por pagina.
+     * - only_alerts: se incorpora cuando se solicitan exclusivamente alertas.
+     * - start: fecha inicial, si se ha seleccionado.
+     * - end: fecha final, si se ha seleccionado.
+     *
+     * La funcion admite dos formatos de respuesta:
+     * 1. Un array directo de registros.
+     * 2. Un objeto paginado con items y metadatos de paginacion.
+     *
+     * @returns {Promise<void>}
+     */
+    async function cargarHistorial() {
+        /* Se obtiene el cuerpo de la tabla que mostrara los resultados. */
+        const tbody = document.getElementById('tabla-body');
+
+        /*
+         * Antes de comenzar la peticion se muestra un estado temporal de carga para
+         * informar al usuario de que los datos se estan actualizando.
+         */
+        tbody.innerHTML =
+            '<tr><td colspan="9" style="text-align: center; color: var(--text-dim); padding: 30px;">Cargando registros...</td></tr>';
+
+        try {
+            /*
+             * URLSearchParams facilita la construccion y codificacion de los
+             * parametros que se incorporaran a la query string.
+             */
+            const params = new URLSearchParams();
+
+            /*
+             * Los valores numericos se convierten explicitamente a texto antes de
+             * almacenarse como parametros de URL.
+             */
+            params.set('page', String(paginaActual));
+            params.set('page_size', String(PAGE_SIZE));
+
+            /*
+             * El parametro only_alerts solo se envia cuando el usuario selecciona
+             * la visualizacion exclusiva de alertas.
+             */
+            if (obtenerModoAlerta() === 'alertas') {
+                params.set('only_alerts', '1');
+            }
+
+            /*
+             * Se recuperan los valores internos de los campos gestionados por
+             * Flatpickr. Estos valores utilizan el formato indicado en dateFormat.
+             */
+            const fechaDesde =
+                document.getElementById('fecha-desde').value;
+
+            const fechaHasta =
+                document.getElementById('fecha-hasta').value;
+
+            /*
+             * Las fechas solamente se incorporan a la consulta cuando existe un
+             * valor seleccionado.
+             */
+            if (fechaDesde) {
+                params.set('start', fechaDesde);
+            }
+
+            if (fechaHasta) {
+                params.set('end', fechaHasta);
+            }
+
+            /*
+             * params.toString() genera la query string completa y correctamente
+             * codificada.
+             */
+            const response = await fetch(
+                `${API_BASE}/api/historial?${params.toString()}`
+            );
+
+            /*
+             * fetch() no lanza por si solo una excepcion ante respuestas HTTP como
+             * 404 o 500. Por ello se comprueba response.ok expresamente.
+             */
+            if (!response.ok) {
+                throw new Error();
+            }
+
+            /* La respuesta JSON se convierte a estructuras JavaScript. */
+            const payload = await response.json();
+
+            /*
+             * COMPATIBILIDAD CON RESPUESTA EN FORMATO ARRAY
+             * ---------------------------------------------------------------------
+             * Si la API devuelve directamente un array, se interpreta como una
+             * respuesta sin paginacion.
+             */
+            if (Array.isArray(payload)) {
+                datosMostrados = payload;
+                paginaActual = 1;
+                totalPaginas = 1;
+                totalRegistros = datosMostrados.length;
+
+                /*
+                 * Al no existir paginas adicionales, ambos botones quedan
+                 * deshabilitados.
+                 */
+                document.getElementById('prev-page-btn').disabled = true;
+                document.getElementById('next-page-btn').disabled = true;
+
+            } else {
+                /*
+                 * RESPUESTA PAGINADA
+                 * -----------------------------------------------------------------
+                 * Se recuperan tanto las filas de la pagina como los metadatos
+                 * proporcionados por el backend.
+                 */
+                datosMostrados = payload.items || [];
+                paginaActual = payload.page || 1;
+                totalPaginas = payload.total_pages || 1;
+                totalRegistros = payload.total || datosMostrados.length;
+
+                /*
+                 * Los controles se habilitan solamente cuando la API comunica que
+                 * existe una pagina anterior o posterior.
+                 */
+                document.getElementById('prev-page-btn').disabled =
+                    !payload.has_prev;
+
+                document.getElementById('next-page-btn').disabled =
+                    !payload.has_next;
+            }
+
+            /*
+             * Se actualiza el contador general de resultados que cumplen los
+             * filtros, no solamente el numero de filas de la pagina visible.
+             */
+            document.getElementById('contador-registros').innerText =
+                totalRegistros;
+
+            /* Se muestra la posicion actual dentro del conjunto de paginas. */
+            document.getElementById('pagination-page').innerText =
+                `Pagina ${paginaActual} / ${totalPaginas}`;
+
+            /*
+             * Esta informacion diferencia las filas que se encuentran actualmente
+             * en pantalla del numero total de registros filtrados.
+             */
+            document.getElementById('pagination-info').innerText =
+                `${datosMostrados.length} filas en pantalla de ${totalRegistros} registros`;
+
+            /*
+             * Una vez actualizado el estado de paginacion, los datos se representan
+             * en la tabla.
+             */
+            renderizarTabla(datosMostrados);
+
+        } catch (error) {
+            /*
+             * Si la peticion falla se sustituye el mensaje de carga por un aviso de
+             * error y tambien se actualiza el bloque informativo de paginacion.
+             */
+            tbody.innerHTML =
+                '<tr><td colspan="9" style="text-align: center; color: var(--accent-red); padding: 30px;">Error de conexion con el servidor</td></tr>';
+
+            document.getElementById('pagination-info').innerText =
+                'No se pudo cargar el historial';
+        }
+    }
+
+
+    /**
+     * Aplica uno de los rangos temporales rapidos disponibles en la interfaz.
+     *
+     * La fecha final siempre se establece en el instante actual y la fecha inicial
+     * se calcula restando al momento actual el intervalo seleccionado.
+     *
+     * El valor "all" deja la fecha inicial como null, permitiendo solicitar el
+     * historial completo hasta la fecha actual.
+     *
+     * @param {string} rango Identificador del rango: 15m, 1h, 6h, 24h, 7d, 30d o all.
+     * @param {HTMLElement} botonElement Boton que ha activado el rango.
+     * @returns {void}
+     */
+    function seleccionarRango(rango, botonElement) {
+        /*
+         * Primero se elimina el estado activo de todos los botones para que solo
+         * quede resaltado el rango actualmente seleccionado.
+         */
+        document
+            .querySelectorAll('.btn-range')
+            .forEach(btn => btn.classList.remove('active'));
+
+        botonElement.classList.add('active');
+
+        /* Se obtiene la fecha y hora actuales como extremo final del intervalo. */
+        const now = new Date();
+
+        /*
+         * El valor null permite representar el caso "TODO", en el que no se
+         * establece un limite temporal inicial.
+         */
+        let desde = null;
+
+        /*
+         * getTime() devuelve milisegundos desde el origen temporal de JavaScript.
+         * Cada intervalo se calcula restando la cantidad correspondiente de
+         * milisegundos.
+         */
+        if (rango === '15m') {
+            desde = new Date(
+                now.getTime() - (15 * 60 * 1000)
+            );
+        }
+        else if (rango === '1h') {
+            desde = new Date(
+                now.getTime() - (60 * 60 * 1000)
+            );
+        }
+        else if (rango === '6h') {
+            desde = new Date(
+                now.getTime() - (6 * 60 * 60 * 1000)
+            );
+        }
+        else if (rango === '24h') {
+            desde = new Date(
+                now.getTime() - (24 * 60 * 60 * 1000)
+            );
+        }
+        else if (rango === '7d') {
+            desde = new Date(
+                now.getTime() - (7 * 24 * 60 * 60 * 1000)
+            );
+        }
+        else if (rango === '30d') {
+            desde = new Date(
+                now.getTime() - (30 * 24 * 60 * 60 * 1000)
+            );
+        }
+
+        /*
+         * setDate() actualiza tanto el valor gestionado por Flatpickr como el campo
+         * asociado. El segundo parametro false evita disparar el evento change.
+         */
+        pickerDesde.setDate(desde, false, 'Y-m-d H:i');
+        pickerHasta.setDate(now, false, 'Y-m-d H:i');
+
+        /*
+         * Un cambio de rango reinicia la navegacion en la primera pagina para
+         * evitar solicitar una pagina que pudiera no existir en el nuevo resultado.
+         */
+        paginaActual = 1;
+
+        /* Se solicita inmediatamente el historial correspondiente al nuevo rango. */
+        cargarHistorial();
+    }
+
+
+    /**
+     * Aplica el intervalo de fechas seleccionado manualmente por el usuario.
+     *
+     * Al tratarse de un rango personalizado se desmarca cualquier boton de rango
+     * rapido que estuviera seleccionado.
+     *
+     * @returns {void}
+     */
+    function aplicarRangoPersonalizado() {
+        document
+            .querySelectorAll('.btn-range')
+            .forEach(btn => btn.classList.remove('active'));
+
+        /* Cada nueva consulta personalizada comienza por la primera pagina. */
+        paginaActual = 1;
+
+        cargarHistorial();
+    }
+
+
+    /**
+     * Cambia de pagina manteniendo todos los filtros actualmente seleccionados.
+     *
+     * @param {number} delta Desplazamiento respecto a la pagina actual.
+     *                       -1 solicita la anterior y 1 la siguiente.
+     * @returns {void}
+     */
+    function cambiarPagina(delta) {
+        /* Se calcula la pagina que resultaria de aplicar el desplazamiento. */
+        const siguiente = paginaActual + delta;
+
+        /*
+         * Se impide solicitar una pagina fuera del intervalo valido.
+         */
+        if (siguiente < 1 || siguiente > totalPaginas) {
+            return;
+        }
+
+        paginaActual = siguiente;
+
+        /*
+         * cargarHistorial() reutiliza los valores actuales de todos los filtros, por
+         * lo que el cambio de pagina no modifica el criterio de consulta.
+         */
+        cargarHistorial();
+    }
+
+
+    /**
+     * Representa en la tabla los registros de telemetria recibidos desde la API.
+     *
+     * Para cada fila se convierten las magnitudes numericas y se comparan
+     * temperatura, humedad y sonido con los limites establecidos.
+     *
+     * Cuando al menos una magnitud supera sus condiciones permitidas, la fila se
+     * etiqueta visualmente como ALERTA.
+     *
+     * @param {Array<Object>} datos Registros que deben mostrarse.
+     * @returns {void}
+     */
+    function renderizarTabla(datos) {
+        const tbody = document.getElementById('tabla-body');
+
+        /*
+         * Se elimina cualquier contenido anterior antes de insertar la nueva
+         * pagina de resultados.
+         */
+        tbody.innerHTML = '';
+
+        /*
+         * Si la consulta no devuelve registros se muestra un mensaje ocupando
+         * todas las columnas de la tabla.
+         */
+        if (datos.length === 0) {
+            tbody.innerHTML =
+                '<tr><td colspan="9" style="text-align: center; color: var(--text-dim); padding: 30px;">No se encontraron registros en ese rango.</td></tr>';
+            return;
+        }
+
+        /*
+         * Cada objeto recibido se transforma en una fila independiente.
+         */
+        datos.forEach(fila => {
+            /*
+             * parseFloat() normaliza los valores numericos recibidos, incluso si
+             * llegan desde el backend representados como cadenas.
+             */
+            const t = parseFloat(fila.temperatura);
+            const h = parseFloat(fila.humedad);
+            const s = parseFloat(fila.sonido);
+            const p = parseFloat(fila.presion);
+            const l = parseFloat(fila.luz);
+
+            /*
+             * Estas variables almacenan las clases CSS que se aplicaran a las
+             * magnitudes que excedan sus limites.
+             */
+            let classT = '';
+            let classH = '';
+            let classS = '';
+
+            /*
+             * isAlert representa el estado global de la lectura. Basta con que una
+             * de las condiciones siguientes se cumpla para marcar el registro.
+             */
+            let isAlert = false;
+
+            /* La temperatura se considera alerta cuando supera el limite maximo. */
+            if (t > LIMITES.temp) {
+                classT = 'text-rojo';
+                isAlert = true;
+            }
+
+            /*
+             * La humedad dispone de limite superior e inferior, por lo que una
+             * lectura fuera de cualquiera de ambos extremos genera una alerta.
+             */
+            if (h > LIMITES.hum || h < LIMITES.min_hum) {
+                classH = 'text-rojo';
+                isAlert = true;
+            }
+
+            /* El nivel de sonido se compara con su limite maximo. */
+            if (s > LIMITES.sonido) {
+                classS = 'text-rojo';
+                isAlert = true;
+            }
+
+            /*
+             * El badge de estado se construye una unica vez a partir del resultado
+             * de las comprobaciones anteriores.
+             */
+            const badgeHTML = isAlert
+                ? '<span class="status-badge bg-err">ALERTA</span>'
+                : '<span class="status-badge bg-ok">NORMAL</span>';
+
+            /*
+             * Se crea una fila DOM y posteriormente se completa su contenido.
+             */
+            const tr = document.createElement('tr');
+
+            tr.innerHTML = `
+                <td style="color: var(--text-dim);">
+                    #${fila.id}
+                </td>
+
+                <td style="color: var(--accent-blue);">
+                    ${fila.fecha_hora}
+                </td>
+
+                <td>
+                    ${fila.nodo_id}
+                </td>
+
+                <!--
+                    isNaN() evita formatear valores que no hayan podido convertirse
+                    correctamente a numero.
+                -->
+                <td class="${classT}">
+                    ${!isNaN(t) ? t.toFixed(1) + ' C' : '--'}
+                </td>
+
+                <td class="${classH}">
+                    ${!isNaN(h) ? h.toFixed(1) + ' %' : '--'}
+                </td>
+
+                <td class="${classS}">
+                    ${!isNaN(s) ? s.toFixed(1) + ' dB' : '--'}
+                </td>
+
+                <!-- La luz se presenta sin decimales. -->
+                <td>
+                    ${!isNaN(l) ? l.toFixed(0) : '--'}
+                </td>
+
+                <!-- La presion se presenta con un decimal y unidad hPa. -->
+                <td>
+                    ${!isNaN(p) ? p.toFixed(1) + ' hPa' : '--'}
+                </td>
+
+                <td>
+                    ${badgeHTML}
+                </td>
+            `;
+
+            /*
+             * La fila terminada se incorpora finalmente al cuerpo de la tabla.
+             */
+            tbody.appendChild(tr);
+        });
+    }
+
+
+    /**
+     * Exporta en formato CSV los registros cargados actualmente en la vista.
+     *
+     * La funcion utiliza datosMostrados, por lo que la descarga corresponde a la
+     * pagina que se encuentra cargada en ese momento y no necesariamente a todas
+     * las paginas que cumplen los filtros.
+     *
+     * @returns {void}
+     */
+    function descargarCSV() {
+        /*
+         * Se evita generar un documento vacio cuando no existen filas disponibles.
+         */
+        if (datosMostrados.length === 0) {
+            alert('No hay datos en la tabla para descargar.');
+            return;
+        }
+
+        /*
+         * La primera linea del CSV contiene los nombres de las columnas.
+         */
+        let csvContent =
+            'ID_REGISTRO,FECHA_HORA,NODO_ORIGEN,TEMPERATURA_C,HUMEDAD_PORC,RUIDO_DB,LUZ_RAW,PRESION_HPA,ESTADO\n';
+
+        datosMostrados.forEach(fila => {
+            /*
+             * Se realizan las mismas conversiones numericas utilizadas en la tabla
+             * para conservar una representacion consistente.
+             */
+            const t = parseFloat(fila.temperatura);
+            const h = parseFloat(fila.humedad);
+            const s = parseFloat(fila.sonido);
+            const p = parseFloat(fila.presion);
+            const l = parseFloat(fila.luz);
+
+            /*
+             * La clasificacion del CSV utiliza los mismos limites que la
+             * representacion visual.
+             */
+            const isAlert =
+                (t > LIMITES.temp)
+                || (h > LIMITES.hum || h < LIMITES.min_hum)
+                || (s > LIMITES.sonido);
+
+            const estadoTexto =
+                isAlert ? 'ALERTA' : 'NORMAL';
+
+            /*
+             * Los valores invalidos se sustituyen por cadenas vacias.
+             * La fecha se encierra entre comillas para conservar correctamente su
+             * contenido textual.
+             */
+            csvContent +=
+                `${fila.id},"${fila.fecha_hora}",${fila.nodo_id},${!isNaN(t) ? t.toFixed(2) : ''},${!isNaN(h) ? h.toFixed(2) : ''},${!isNaN(s) ? s.toFixed(2) : ''},${!isNaN(l) ? l.toFixed(0) : ''},${!isNaN(p) ? p.toFixed(2) : ''},${estadoTexto}\n`;
+        });
+
+        /*
+         * Blob permite construir en memoria un fichero a partir del texto CSV.
+         */
+        const blob = new Blob(
+            [csvContent],
+            { type: 'text/csv;charset=utf-8;' }
+        );
+
+        /*
+         * Se crea una URL temporal que referencia al Blob generado.
+         */
+        const url = URL.createObjectURL(blob);
+
+        /*
+         * Se crea dinamicamente un enlace para iniciar la descarga sin necesidad de
+         * solicitar un fichero adicional al servidor.
+         */
+        const link = document.createElement('a');
+
+        link.setAttribute('href', url);
+
+        /*
+         * El nombre incorpora la fecha actual en formato YYYY-MM-DD para facilitar
+         * la identificacion de cada exportacion.
+         */
+        link.setAttribute(
+            'download',
+            `SMI_Historial_${new Date().toISOString().slice(0,10)}.csv`
+        );
+
+        /*
+         * El enlace se incorpora temporalmente al documento, se pulsa de forma
+         * programatica y se elimina inmediatamente despues.
+         */
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+
+    /**
+     * Configura el selector personalizado que alterna entre registros y alertas.
+     *
+     * El SELECT nativo permanece oculto y contiene el valor real del filtro.
+     * Los botones personalizados se utilizan como interfaz visual.
+     *
+     * @returns {void}
+     */
+    function configurarMostrarSelect() {
+        /* Contenedor general del selector personalizado. */
+        const shell =
+            document.getElementById('mostrar-shell');
+
+        /* Boton que muestra la opcion seleccionada. */
+        const button =
+            document.getElementById('mostrar-select-btn');
+
+        /* SELECT HTML que almacena el valor real utilizado por el filtro. */
+        const nativeSelect =
+            document.getElementById('filtro-estado');
+
+        /*
+         * querySelectorAll() devuelve una NodeList. Array.from() la convierte en un
+         * array convencional para trabajar posteriormente con forEach().
+         */
+        const options = Array.from(
+            document.querySelectorAll('.custom-select-option')
+        );
+
+        /*
+         * El boton principal abre o cierra el menu.
+         */
+        button.addEventListener('click', () => {
+            shell.classList.toggle('open');
+
+            /*
+             * aria-expanded comunica tambien el estado del desplegable a
+             * tecnologias de asistencia.
+             */
+            button.setAttribute(
+                'aria-expanded',
+                shell.classList.contains('open')
+                    ? 'true'
+                    : 'false'
+            );
+        });
+
+        /*
+         * Se registra un evento click para cada opcion personalizada.
+         */
+        options.forEach((option) => {
+            option.addEventListener('click', () => {
+                /*
+                 * dataset.value recupera el atributo data-value del boton y lo
+                 * almacena en el SELECT oculto.
+                 */
+                nativeSelect.value =
+                    option.dataset.value;
+
+                /*
+                 * El boton principal adopta el texto de la opcion seleccionada.
+                 */
+                button.textContent =
+                    option.textContent.trim();
+
+                /*
+                 * Solamente la opcion activa mantiene la clase visual "active".
+                 */
+                options.forEach(item =>
+                    item.classList.remove('active')
+                );
+
+                option.classList.add('active');
+
+                /* Tras seleccionar una opcion, el menu se cierra. */
+                shell.classList.remove('open');
+
+                button.setAttribute(
+                    'aria-expanded',
+                    'false'
+                );
+
+                /*
+                 * Al cambiar el filtro se vuelve a la primera pagina.
+                 */
+                paginaActual = 1;
+
+                /* Se solicita inmediatamente el nuevo conjunto de resultados. */
+                cargarHistorial();
+            });
+        });
+
+        /*
+         * Este listener permite cerrar el desplegable cuando se pulsa fuera del
+         * componente.
+         */
+        document.addEventListener('click', (event) => {
+            if (!shell.contains(event.target)) {
+                shell.classList.remove('open');
+
+                button.setAttribute(
+                    'aria-expanded',
+                    'false'
+                );
+            }
+        });
+    }
+
+
+    /**
+     * Establece el estado inicial del historial.
+     *
+     * Al abrir la vista se seleccionan automaticamente las ultimas 24 horas, se
+     * marca el boton correspondiente y se realiza la primera consulta.
+     *
+     * @returns {void}
+     */
+    function inicializarHistorial() {
+        /* Fecha y hora actuales. */
+        const now = new Date();
+
+        /*
+         * Se calcula el inicio restando exactamente 24 horas expresadas en
+         * milisegundos.
+         */
+        const start = new Date(
+            now.getTime() - (24 * 60 * 60 * 1000)
+        );
+
+        /*
+         * Las instancias Flatpickr actualizan los valores de los dos campos.
+         */
+        pickerDesde.setDate(
+            start,
+            false,
+            'Y-m-d H:i'
+        );
+
+        pickerHasta.setDate(
+            now,
+            false,
+            'Y-m-d H:i'
+        );
+
+        /*
+         * Se localiza el boton cuyo texto es 24H para reflejar visualmente el rango
+         * seleccionado al abrir la pagina.
+         */
+        const btn24 = Array.from(
+            document.querySelectorAll('.btn-range')
+        ).find(
+            btn => btn.textContent.trim() === '24H'
+        );
+
+        if (btn24) {
+            btn24.classList.add('active');
+        }
+
+        /* Se realiza la primera consulta del historial. */
+        cargarHistorial();
+    }
+
+
+    /**
+     * Ajusta las filas visibles del calendario Flatpickr.
+     *
+     * Algunos meses pueden generar filas completas pertenecientes al mes anterior
+     * o siguiente. Esta funcion analiza cada semana y oculta las filas que no
+     * contienen ningun dia del mes actualmente mostrado.
+     *
+     * La firma de la funcion coincide con la utilizada por los callbacks de
+     * Flatpickr.
+     *
+     * @param {Array<Date>} selectedDates Fechas seleccionadas por Flatpickr.
+     * @param {string} dateStr Representacion textual de la seleccion.
+     * @param {Object} instance Instancia de Flatpickr que ha ejecutado el callback.
+     * @returns {void}
+     */
+    function ajustarFilasCalendario(
+        selectedDates,
+        dateStr,
+        instance
+    ) {
+        /*
+         * El encadenamiento opcional ?. evita errores si alguno de los elementos
+         * internos de Flatpickr todavia no se encuentra disponible.
+         */
+        const dayContainer =
+            instance?.calendarContainer?.querySelector(
+                '.flatpickr-days .dayContainer'
+            );
+
+        if (!dayContainer) {
+            return;
+        }
+
+        /*
+         * Cada elemento del array rows representara una semana completa.
+         */
+        const rows = [];
+
+        /*
+         * Se recuperan todos los elementos visuales que representan dias.
+         */
+        const days = Array.from(
+            dayContainer.querySelectorAll('.flatpickr-day')
+        );
+
+        /*
+         * Los dias se agrupan en bloques de siete elementos, correspondientes a
+         * semanas completas.
+         */
+        for (
+            let index = 0;
+            index < days.length;
+            index += 7
+        ) {
+            rows.push(
+                days.slice(index, index + 7)
+            );
+        }
+
+        /*
+         * Se analiza cada fila del calendario de forma independiente.
+         */
+        rows.forEach((row, rowIndex) => {
+            if (!row.length) {
+                return;
+            }
+
+            /*
+             * some() devuelve true si al menos un dia de la semana pertenece al mes
+             * actual, es decir, si no incorpora las clases prevMonthDay ni
+             * nextMonthDay.
+             */
+            const hasCurrentMonthDay = row.some(
+                day =>
+                    !day.classList.contains('prevMonthDay')
+                    && !day.classList.contains('nextMonthDay')
+            );
+
+            /*
+             * Si toda la fila corresponde a meses adyacentes, sus dias se ocultan.
+             */
+            row.forEach(day => {
+                day.style.display =
+                    hasCurrentMonthDay ? '' : 'none';
+            });
+        });
+    }
+
+
+    /*
+     * ============================================================================
+     * INICIALIZACION GENERAL DE LA VISTA
+     * ============================================================================
+     *
+     * window.onload garantiza que la estructura HTML y las librerias externas ya
+     * se encuentran disponibles antes de crear los calendarios y cargar datos.
+     */
+    window.onload = () => {
+
+        /*
+         * CALENDARIO DE FECHA INICIAL
+         * -------------------------------------------------------------------------
+         *
+         * enableTime:
+         *     Permite seleccionar tambien la hora.
+         *
+         * time_24hr:
+         *     Utiliza formato horario de 24 horas.
+         *
+         * dateFormat:
+         *     Define el valor real almacenado en el INPUT y utilizado por la API.
+         *
+         * altInput:
+         *     Hace que Flatpickr muestre un campo visual alternativo.
+         *
+         * altFormat:
+         *     Define un formato mas legible para el usuario.
+         *
+         * locale:
+         *     Utiliza la traduccion espanola cargada previamente.
+         *
+         * allowInput:
+         *     Impide escribir manualmente y obliga a utilizar el calendario.
+         *
+         * onReady, onMonthChange y onOpen:
+         *     Ejecutan ajustarFilasCalendario() para eliminar filas visuales
+         *     sobrantes.
+         */
+        pickerDesde = flatpickr(
+            '#fecha-desde',
+            {
+                enableTime: true,
+                time_24hr: true,
+                dateFormat: 'Y-m-d H:i',
+                altInput: true,
+                altFormat: 'd/m/Y H:i',
+                locale: 'es',
+                allowInput: false,
+                onReady: [ajustarFilasCalendario],
+                onMonthChange: [ajustarFilasCalendario],
+                onOpen: [ajustarFilasCalendario]
+            }
+        );
+
+
+        /*
+         * CALENDARIO DE FECHA FINAL
+         * -------------------------------------------------------------------------
+         * Mantiene exactamente la misma configuracion que el calendario inicial
+         * para garantizar que ambos campos utilicen formatos compatibles.
+         */
+        pickerHasta = flatpickr(
+            '#fecha-hasta',
+            {
+                enableTime: true,
+                time_24hr: true,
+                dateFormat: 'Y-m-d H:i',
+                altInput: true,
+                altFormat: 'd/m/Y H:i',
+                locale: 'es',
+                allowInput: false,
+                onReady: [ajustarFilasCalendario],
+                onMonthChange: [ajustarFilasCalendario],
+                onOpen: [ajustarFilasCalendario]
+            }
+        );
+
+        /*
+         * Se activa el selector visual de modo de registros.
+         */
+        configurarMostrarSelect();
+
+        /*
+         * Finalmente se establece el rango inicial de 24 horas y se ejecuta la
+         * primera consulta al backend.
+         */
+        inicializarHistorial();
+    };
+</script>
+<!--
+    Script compartido encargado de gestionar el tema visual y mantener la apariencia
+    seleccionada de forma coherente con el resto de vistas de S.M.I. CORE.
+-->
+<script src="theme.js"></script>
+
+</body>
+</html>

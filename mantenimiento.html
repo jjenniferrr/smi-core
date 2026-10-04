@@ -1,0 +1,2368 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <!--
+        ============================================================================
+        ARCHIVO: mantenimiento.html
+        DESCRIPCION GENERAL
+        ============================================================================
+
+        Este archivo implementa la vista de Analisis por Zonas del sistema
+        S.M.I. CORE.
+
+        Su objetivo consiste en transformar los datos operativos individuales de
+        los nodos en una vision agregada por areas funcionales de la planta.
+
+        A diferencia del dashboard principal, que muestra el estado global en
+        tiempo real, y de la ficha de detalle, que se centra en un unico nodo, esta
+        pantalla ofrece un nivel intermedio de analisis orientado a comparar zonas.
+
+        Las zonas base definidas son:
+        - Produccion.
+        - Almacen.
+        - Salas Tecnicas.
+        - Exterior.
+        - Otros.
+
+        Los nodos se asignan automaticamente a una de estas zonas mediante reglas
+        basadas en su identificador, nombre y tipo. Esto permite incorporar nuevos
+        nodos sin depender exclusivamente de una lista cerrada.
+
+        Para cada zona se calculan y muestran:
+        - Numero de nodos configurados.
+        - Numero de nodos con lectura reciente.
+        - Temperatura media.
+        - Humedad media.
+        - Ruido medio.
+        - Presion media.
+        - Numero de alertas acumuladas.
+        - Nodo con mayor temperatura.
+        - Nodo con mayor ruido.
+        - Nodo con mayor numero de alertas.
+        - Ultima lectura disponible.
+        - Estado cualitativo de la zona.
+
+        La vista incorpora ademas:
+        - Un buscador por nombre de zona, descripcion o identificador de nodo.
+        - Diferentes criterios de ordenacion.
+        - Un boton para forzar el refresco.
+        - KPIs agregados en la parte superior.
+        - Refresco automatico de la informacion cada cinco segundos.
+
+        FLUJO GENERAL DE FUNCIONAMIENTO
+        --------------------------------
+        1. Se inicializa el reloj de la cabecera.
+        2. Se inicializa el selector personalizado de ordenacion.
+        3. Se solicitan en paralelo:
+           - Nodos configurados.
+           - Lecturas recientes.
+           - Alertas acumuladas.
+        4. Los nodos activos se clasifican en zonas.
+        5. Se relacionan las lecturas recientes con sus nodos.
+        6. Se calculan medias y valores destacados por zona.
+        7. Se determina el estado cualitativo de cada zona.
+        8. Se aplican los filtros de busqueda y ordenacion.
+        9. Se actualizan los KPIs generales.
+        10. Se generan dinamicamente las tarjetas de zona.
+        11. La informacion se vuelve a solicitar cada cinco segundos.
+
+        La obtencion y persistencia de nodos, telemetria y alertas corresponde al
+        backend. Esta vista se encarga de combinar dichas fuentes y construir una
+        representacion analitica orientada a la comparacion entre areas.
+        ============================================================================
+    -->
+    <!-- Define la codificacion utilizada por el documento. -->
+    <meta charset="UTF-8">
+
+    <!-- Permite adaptar correctamente la interfaz a distintos dispositivos. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Titulo mostrado en la pestana del navegador. -->
+    <title>S.M.I. CORE | Analisis por Zonas</title>
+
+    <!--
+        Se cargan las tipografias utilizadas por la interfaz.
+        Inter se emplea para textos generales y JetBrains Mono para valores
+        numericos, identificadores y datos tecnicos.
+    -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+
+    <!-- Bootstrap aporta clases auxiliares reutilizadas en la maquetacion. -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!--
+        El tema almacenado se aplica antes de representar completamente la pagina.
+        Si no existe preferencia se utiliza el tema oscuro.
+    -->
+    <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('smi-theme') || 'dark');</script>
+
+    <!-- Hoja de estilos compartida con el resto de vistas de S.M.I. CORE. -->
+    <link href="theme.css" rel="stylesheet">
+
+    <style>
+        /*
+         * =========================================================================
+         * VARIABLES GLOBALES DE ESTILO
+         * =========================================================================
+         * Se centraliza la paleta utilizada por tarjetas, estados y controles.
+         */
+        :root {
+            --bg-main: #0d1117;
+            --panel-bg: #161b22;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --accent-orange: #d29922;
+            --border: #30363d;
+            --text-main: #e6edf3;
+            --text-dim: #7d8590;
+        }
+
+        /*
+         * =========================================================================
+         * CONFIGURACION GENERAL
+         * =========================================================================
+         */
+        body {
+            background: var(--bg-main);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; }
+        .text-muted { color: #9aa4b2 !important; }
+
+        /*
+         * =========================================================================
+         * MENU LATERAL
+         * =========================================================================
+         * Permanece fijo en escritorio para mantener disponible la navegacion.
+         */
+        .sidebar {
+            width: 260px;
+            height: 100vh;
+            background: var(--panel-bg);
+            border-right: 1px solid var(--border);
+            position: fixed;
+            padding: 30px 20px;
+            display: flex;
+            flex-direction: column;
+            z-index: 100;
+        }
+
+        .logo-box { margin-bottom: 40px; padding-left: 10px; }
+        .nav-list { flex-grow: 1; }
+        .nav-item {
+            padding: 10px 14px;
+            color: var(--text-dim);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            border-radius: 6px;
+            margin-bottom: 5px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+        .nav-item:hover { background: rgba(255,255,255,0.05); color: var(--text-main); }
+        .nav-item.active {
+            background: rgba(88, 166, 255, 0.1);
+            color: var(--accent-blue);
+            border: 1px solid rgba(88, 166, 255, 0.2);
+        }
+
+        .sidebar-divider { height: 1px; background: var(--border); margin: 15px 0; }
+        .sidebar-label {
+            color: var(--text-dim);
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding-left: 14px;
+            margin-bottom: 10px;
+            display: block;
+        }
+
+        /*
+         * =========================================================================
+         * CONTENIDO PRINCIPAL
+         * =========================================================================
+         */
+        .main-content {
+            margin-left: 260px;
+            padding: 40px;
+        }
+
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .section-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--text-main);
+            margin-bottom: 6px;
+        }
+
+        .page-subtitle {
+            margin: 0;
+            color: var(--text-dim);
+            max-width: 780px;
+        }
+
+        .clock {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent-blue);
+            font-size: 1.15rem;
+            white-space: nowrap;
+        }
+
+        /*
+         * =========================================================================
+         * KPIs GENERALES
+         * =========================================================================
+         * Resume la situacion agregada de todas las zonas visibles.
+         */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 18px;
+            margin-bottom: 22px;
+        }
+
+        .summary-card,
+        .toolbar-card,
+        .zone-card {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+        }
+
+        .summary-card {
+            padding: 18px 20px;
+            min-height: 108px;
+        }
+
+        .summary-label {
+            color: var(--text-dim);
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 8px;
+        }
+
+        .summary-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.7rem;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .summary-detail {
+            margin-top: 8px;
+            color: var(--text-dim);
+            font-size: 12px;
+        }
+
+        /*
+         * =========================================================================
+         * BARRA DE BUSQUEDA Y ORDENACION
+         * =========================================================================
+         */
+        .toolbar-card {
+            padding: 18px;
+            margin-bottom: 18px;
+        }
+
+        .toolbar-grid {
+            display: grid;
+            grid-template-columns: minmax(280px, 1.4fr) minmax(220px, 0.7fr) auto;
+            gap: 12px;
+            align-items: end;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .field label {
+            color: var(--text-dim);
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        /*
+         * El SELECT nativo conserva el valor real de ordenacion, aunque la interfaz
+         * visible se construye con botones personalizados.
+         */
+        .native-sort-select {
+            display: none;
+        }
+
+        /*
+         * =========================================================================
+         * SELECTOR PERSONALIZADO DE ORDEN
+         * =========================================================================
+         */
+        .select-shell {
+            position: relative;
+        }
+
+        .select-shell::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            right: 16px;
+            width: 9px;
+            height: 9px;
+            border-right: 2px solid #a7b7ca;
+            border-bottom: 2px solid #a7b7ca;
+            transform: translateY(-65%) rotate(45deg);
+            pointer-events: none;
+            transition: transform 0.2s ease;
+        }
+
+        .select-shell.open::after {
+            transform: translateY(-35%) rotate(225deg);
+        }
+
+        .custom-select-btn {
+            width: 100%;
+            min-height: 44px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.015) 100%), var(--bg-main);
+            color: var(--text-main);
+            padding: 0 42px 0 14px;
+            font-size: 13px;
+            font-weight: 600;
+            text-align: left;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+        }
+
+        .custom-select-btn:hover {
+            border-color: #4b5563;
+        }
+
+        .custom-select-btn:focus {
+            outline: none;
+            border-color: rgba(88, 166, 255, 0.55);
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.12);
+        }
+
+        .custom-select-menu {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            right: 0;
+            z-index: 120;
+            background: #11161d;
+            border: 1px solid #30363d;
+            border-radius: 14px;
+            padding: 8px;
+            box-shadow: 0 18px 36px rgba(0,0,0,0.36);
+            display: none;
+        }
+
+        .select-shell.open .custom-select-menu {
+            display: block;
+        }
+
+        .custom-select-option {
+            width: 100%;
+            border: none;
+            background: transparent;
+            color: #dce6f2;
+            border-radius: 10px;
+            padding: 11px 12px;
+            text-align: left;
+            font-size: 13px;
+            font-weight: 600;
+            transition: background 0.18s ease, color 0.18s ease;
+        }
+
+        .custom-select-option:hover {
+            background: rgba(88, 166, 255, 0.1);
+            color: #ffffff;
+        }
+
+        .custom-select-option.active {
+            background: linear-gradient(180deg, rgba(47,129,247,0.96) 0%, rgba(31,111,235,0.96) 100%);
+            color: #ffffff;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+        }
+
+        :root[data-theme="light"] .custom-select-menu {
+            background: #ffffff;
+            border-color: #d5e1ee;
+            box-shadow: 0 16px 30px rgba(20,33,51,0.14);
+        }
+
+        :root[data-theme="light"] .custom-select-option {
+            color: #142133;
+        }
+
+        :root[data-theme="light"] .custom-select-option:hover {
+            background: rgba(31,102,209,0.08);
+            color: #142133;
+        }
+
+        .field input,
+        .field select,
+        .btn-refresh {
+            min-height: 44px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.015) 100%), var(--bg-main);
+            color: var(--text-main);
+            font-size: 13px;
+        }
+
+        .field input,
+        .field select {
+            padding: 0 14px;
+        }
+
+        .btn-refresh {
+            padding: 0 18px;
+            font-weight: 700;
+            transition: 0.2s;
+        }
+        .btn-refresh:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+
+        /*
+         * =========================================================================
+         * GRID DE ZONAS
+         * =========================================================================
+         * Las tarjetas se distribuyen automaticamente segun el ancho disponible.
+         */
+        .zones-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+            gap: 18px;
+        }
+
+        /*
+         * Cada zone-card representa una zona funcional completa.
+         */
+        .zone-card {
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .zone-card:hover {
+            border-color: rgba(88, 166, 255, 0.38);
+            transform: translateY(-1px);
+            box-shadow: 0 12px 28px rgba(0,0,0,0.2);
+        }
+
+        .zone-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 14px;
+            align-items: flex-start;
+        }
+
+        .zone-title {
+            font-size: 1.05rem;
+            font-weight: 700;
+            margin: 0 0 6px;
+            color: var(--text-main);
+        }
+
+        .zone-subtitle {
+            margin: 0;
+            color: var(--text-dim);
+            font-size: 12px;
+        }
+
+        .zone-status {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 30px;
+            padding: 0 12px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        /*
+         * =========================================================================
+         * ESTADOS CUALITATIVOS DE ZONA
+         * =========================================================================
+         * Estable, vigilancia, critica y sin datos reciben estilos distintos.
+         */
+        .status-ok {
+            color: #34d058;
+            background: rgba(63,185,80,0.14);
+            border: 1px solid rgba(63,185,80,0.28);
+        }
+        .status-warn {
+            color: #d29922;
+            background: rgba(210,153,34,0.14);
+            border: 1px solid rgba(210,153,34,0.28);
+        }
+        .status-alert {
+            color: #ff6e67;
+            background: rgba(248,81,73,0.14);
+            border: 1px solid rgba(248,81,73,0.28);
+        }
+        .status-offline {
+            color: #9aa4b2;
+            background: rgba(125,133,144,0.14);
+            border: 1px solid rgba(125,133,144,0.28);
+        }
+
+        /*
+         * =========================================================================
+         * METRICAS AMBIENTALES
+         * =========================================================================
+         * Se presentan temperatura, humedad, ruido y presion en una rejilla 2x2.
+         */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .metric-box {
+            min-height: 84px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 14px;
+            background: rgba(255,255,255,0.02);
+        }
+
+        .metric-label {
+            color: var(--text-dim);
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .metric-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--text-main);
+            line-height: 1.1;
+        }
+
+        .metric-detail {
+            margin-top: 6px;
+            color: var(--text-dim);
+            font-size: 11px;
+        }
+
+        .zone-block {
+            border-top: 1px solid rgba(255,255,255,0.06);
+            padding-top: 14px;
+        }
+
+        .block-title {
+            color: var(--text-dim);
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 10px;
+        }
+
+        /*
+         * Lista visual de identificadores de nodos incluidos en la zona.
+         */
+        .chip-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            min-height: 28px;
+            padding: 0 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(88,166,255,0.24);
+            background: rgba(88,166,255,0.08);
+            color: var(--accent-blue);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        /*
+         * Pie de la tarjeta con nodo mas comprometido y ultima lectura.
+         */
+        .zone-footer {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            align-items: stretch;
+        }
+
+        .footer-box {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 14px;
+            background: rgba(255,255,255,0.02);
+            min-width: 0;
+        }
+
+        .footer-title {
+            color: var(--text-dim);
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .footer-value {
+            color: var(--text-main);
+            font-weight: 700;
+            min-width: 0;
+            overflow-wrap: anywhere;
+            line-height: 1.45;
+        }
+
+        .footer-value a {
+            color: var(--accent-blue);
+            text-decoration: none;
+        }
+        .footer-value a:hover { text-decoration: underline; }
+
+        /*
+         * Estado alternativo utilizado cuando no existen resultados.
+         */
+        .empty-state {
+            padding: 42px 24px;
+            border: 1px dashed var(--border);
+            border-radius: 12px;
+            background: rgba(255,255,255,0.02);
+            color: var(--text-dim);
+            text-align: center;
+        }
+
+        /*
+         * =========================================================================
+         * ADAPTACION PARA PANTALLAS MEDIAS
+         * =========================================================================
+         */
+        @media (max-width: 1180px) {
+            .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+
+        /*
+         * =========================================================================
+         * DISENO RESPONSIVE PARA TABLETS
+         * =========================================================================
+         */
+        @media (max-width: 980px) {
+            body { display: block; }
+            .sidebar {
+                position: static;
+                width: 100%;
+                max-width: 100%;
+                height: auto;
+                padding: 18px;
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+            }
+            .logo-box { margin-bottom: 18px; padding-left: 0; }
+            .nav-list, .sidebar-footer {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 8px;
+            }
+            .nav-item { margin-bottom: 0; min-height: 42px; }
+            .main-content { margin-left: 0; padding: 24px; }
+            .page-header { flex-direction: column; }
+            .toolbar-grid { grid-template-columns: 1fr; }
+        }
+
+        /*
+         * =========================================================================
+         * DISENO RESPONSIVE PARA MOVILES
+         * =========================================================================
+         */
+        @media (max-width: 640px) {
+            .main-content { padding: 18px 14px; }
+            .sidebar {
+                position: sticky;
+                top: 0;
+                z-index: 1000;
+                padding: 12px;
+            }
+            .logo-box { margin-bottom: 10px; }
+            .nav-list, .sidebar-footer {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
+                gap: 8px;
+            }
+            .sidebar-footer > div, .sidebar-label { display: none; }
+            .nav-item {
+                min-width: 0;
+                min-height: 36px;
+                white-space: normal;
+                overflow-wrap: anywhere;
+                justify-content: center;
+                text-align: center;
+                padding: 8px 12px;
+                font-size: 13px;
+            }
+            .summary-grid { grid-template-columns: 1fr; }
+            .zones-grid { grid-template-columns: 1fr; }
+            .metrics-grid,
+            .zone-footer { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+<!--
+    ============================================================================
+    NAVEGACION PRINCIPAL
+    ============================================================================
+    La opcion Analisis por Zonas aparece marcada como activa.
+-->
+<nav class="sidebar">
+    <div class="logo-box">
+        <h5 class="text-white fw-bold mb-0">S.M.I. <span style="color:var(--accent-blue)">CORE</span></h5>
+        <small class="text-muted" style="font-size: 10px; font-family: 'JetBrains Mono';">VER. 2.6.0-STABLE</small>
+    </div>
+        <div class="nav-list">
+        <a href="index.html" class="nav-item">Dashboard Vivo</a>
+        <a href="mapa.html" class="nav-item">Mapa de Planta</a>
+        <a href="mantenimiento.html" class="nav-item active">Analisis por Zonas</a>
+        <a href="historial.html" class="nav-item">Historial de Datos</a>
+        <a href="reportes.html" class="nav-item">Reportes</a>
+    </div>
+    <div class="sidebar-footer">
+        <div class="sidebar-divider"></div>
+        <small class="sidebar-label">Administracion</small>
+        <a href="configurar-sistema.html" class="nav-item">Configurar Sistema</a>
+        <a href="historial-configuracion.html" class="nav-item">Registro Config.</a>
+    </div>
+</nav>
+
+<!--
+    ============================================================================
+    CONTENIDO PRINCIPAL DEL ANALISIS
+    ============================================================================
+-->
+<main class="main-content">
+
+    <!--
+        CABECERA
+        Presenta el objetivo de la vista y un reloj actualizado cada segundo.
+    -->
+    <div class="page-header">
+        <div>
+            <h4 class="section-title">Analisis por Zonas</h4>
+            <p class="page-subtitle">Comparativa de las areas principales de la planta: produccion, almacen, exterior y salas tecnicas. Cada zona resume sus nodos, medias ambientales, incidencias y el punto que requiere mas atencion.</p>
+        </div>
+        <div class="clock" id="reloj">00:00:00</div>
+    </div>
+
+    <!--
+        ============================================================================
+        RESUMEN GENERAL
+        ============================================================================
+        Estos cuatro indicadores se recalculan cada vez que se renderizan las zonas.
+    -->
+    <section class="summary-grid">
+        <div class="summary-card">
+            <div class="summary-label">Zonas monitorizadas</div>
+            <div class="summary-value" id="summaryZones">0</div>
+            <div class="summary-detail">Areas activas en esta vista</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Nodos evaluados</div>
+            <div class="summary-value" id="summaryNodes">0</div>
+            <div class="summary-detail" id="summaryNodesDetail">Sin datos cargados</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Zona con mas alertas</div>
+            <div class="summary-value" id="summaryWorst">--</div>
+            <div class="summary-detail" id="summaryWorstDetail">Esperando telemetria</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Ultima lectura</div>
+            <div class="summary-value" id="summaryLast">--:--:--</div>
+            <div class="summary-detail" id="summaryLastDetail">Sin lecturas</div>
+        </div>
+    </section>
+
+    <!--
+        ============================================================================
+        HERRAMIENTAS DE BUSQUEDA Y ORDEN
+        ============================================================================
+    -->
+    <section class="toolbar-card">
+        <div class="toolbar-grid">
+            <div class="field">
+                <label>Buscar zona o nodo</label>
+                <input id="searchInput" type="text" placeholder="Produccion, almacen, exterior, SIM_LINEA_PROD_A...">
+            </div>
+            <div class="field">
+                <label>Orden</label>
+                <div class="select-shell" id="sort-shell">
+                    <select id="sortSelect" class="native-sort-select">
+                        <option value="alerts">Mas alertas</option>
+                        <option value="temp">Mayor temperatura media</option>
+                        <option value="humidity">Mayor humedad media</option>
+                        <option value="noise">Mayor ruido medio</option>
+                        <option value="pressure">Mayor presion media</option>
+                        <option value="name">Nombre de zona</option>
+                    </select>
+                    <button type="button" class="custom-select-btn" id="sort-select-btn" aria-expanded="false">Mas alertas</button>
+                    <div class="custom-select-menu" id="sort-select-menu">
+                        <button type="button" class="custom-select-option active" data-value="alerts">Mas alertas</button>
+                        <button type="button" class="custom-select-option" data-value="temp">Mayor temperatura media</button>
+                        <button type="button" class="custom-select-option" data-value="humidity">Mayor humedad media</button>
+                        <button type="button" class="custom-select-option" data-value="noise">Mayor ruido medio</button>
+                        <button type="button" class="custom-select-option" data-value="pressure">Mayor presion media</button>
+                        <button type="button" class="custom-select-option" data-value="name">Nombre de zona</button>
+                    </div>
+                </div>
+            </div>
+            <div class="field">
+                <label>Accion</label>
+                <button id="refreshBtn" type="button" class="btn-refresh">Forzar refresco</button>
+            </div>
+        </div>
+    </section>
+
+    <!--
+        ============================================================================
+        CONTENEDOR DE ZONAS
+        ============================================================================
+        Las tarjetas se generan dinamicamente mediante renderZones().
+    -->
+    <section class="zones-grid" id="zonesGrid">
+        <div class="empty-state">Cargando zonas...</div>
+    </section>
+</main>
+
+<script>
+    /*
+     * ============================================================================
+     * LOGICA DEL ANALISIS POR ZONAS
+     * ============================================================================
+     *
+     * Este bloque se encarga de:
+     * - Mantener el reloj de la interfaz.
+     * - Normalizar numeros y fechas recibidos desde la API.
+     * - Crear indices Map para acceso rapido por nodo.
+     * - Clasificar nodos dentro de zonas funcionales.
+     * - Agrupar nodos activos por zona.
+     * - Asociar alertas y lecturas recientes.
+     * - Calcular medias y valores destacados.
+     * - Construir el modelo analitico de cada zona.
+     * - Aplicar busqueda y ordenacion.
+     * - Actualizar los KPIs generales.
+     * - Renderizar dinamicamente las tarjetas.
+     * - Cargar en paralelo las distintas fuentes de datos.
+     * ============================================================================
+     */
+
+
+    /*
+     * URL BASE DE LA API.
+     *
+     * Si la pagina se sirve mediante HTTP/HTTPS se utiliza el mismo origen.
+     * Si se abre directamente como archivo local se utiliza localhost:5000.
+     */
+    const API_BASE = window.location.protocol.startsWith('http')
+        ? window.location.origin
+        : 'http://localhost:5000';
+
+
+    /*
+     * ============================================================================
+     * DEFINICION BASE DE ZONAS
+     * ============================================================================
+     *
+     * La clasificacion real de cada nodo se realiza posteriormente con inferZoneId().
+     */
+    const ZONES = [
+        {
+            id: 'PRODUCCION',
+            name: 'Produccion',
+            description:
+                'Lineas de fabricacion y maquinaria de proceso.'
+        },
+        {
+            id: 'ALMACEN',
+            name: 'Almacen',
+            description:
+                'Recepcion, carga y almacenamiento logistico.'
+        },
+        {
+            id: 'SALAS_TECNICAS',
+            name: 'Salas Tecnicas',
+            description:
+                'Equipos auxiliares, cuarto frio y calderas.'
+        },
+        {
+            id: 'EXTERIOR',
+            name: 'Exterior',
+            description:
+                'Condiciones ambientales de referencia exterior.'
+        },
+        {
+            id: 'OTROS',
+            name: 'Otros',
+            description:
+                'Nodos activos pendientes de clasificacion exacta en el plano.'
+        }
+    ];
+
+
+    /*
+     * ============================================================================
+     * CACHE EN MEMORIA
+     * ============================================================================
+     */
+
+    /* Nodos configurados obtenidos desde /api/nodos. */
+    let configuredNodes = [];
+
+    /* Ultimas lecturas disponibles obtenidas desde /api/datos_recientes. */
+    let recentNodes = [];
+
+    /* Alertas acumuladas obtenidas desde /api/alertas. */
+    let allAlerts = [];
+
+
+    /**
+     * Actualiza el reloj visible de la cabecera.
+     *
+     * @returns {void}
+     */
+    function tickClock() {
+        document
+            .getElementById('reloj')
+            .textContent =
+                new Date().toLocaleTimeString(
+                    'es-ES'
+                );
+    }
+
+
+    /*
+     * Se realiza una primera actualizacion inmediata.
+     */
+    tickClock();
+
+    /*
+     * El reloj vuelve a actualizarse cada segundo.
+     */
+    setInterval(
+        tickClock,
+        1000
+    );
+
+
+    /**
+     * Convierte un valor potencialmente numerico a Number.
+     *
+     * Number.isFinite() permite descartar NaN, Infinity y -Infinity.
+     *
+     * @param {*} value Valor que se desea convertir.
+     * @returns {number|null} Numero valido o null.
+     */
+    function parseNumber(value) {
+        const num =
+            Number(value);
+
+        return Number.isFinite(num)
+            ? num
+            : null;
+    }
+
+
+    /**
+     * Convierte un valor de fecha recibido desde la API a un objeto Date.
+     *
+     * El espacio entre fecha y hora se sustituye por "T" para favorecer un formato
+     * compatible con el constructor Date.
+     *
+     * @param {*} value Valor de fecha recibido.
+     * @returns {Date|null} Fecha valida o null.
+     */
+    function parseDate(value) {
+        if (!value) {
+            return null;
+        }
+
+        const date =
+            new Date(
+                String(value).replace(
+                    ' ',
+                    'T'
+                )
+            );
+
+        /*
+         * getTime() devuelve NaN cuando la fecha no puede interpretarse.
+         */
+        return Number.isNaN(
+            date.getTime()
+        )
+            ? null
+            : date;
+    }
+
+
+    /**
+     * Formatea una fecha completa para mostrarla en la interfaz.
+     *
+     * @param {*} value Valor de fecha recibido.
+     * @returns {string} Fecha localizada en espanol o "Sin lectura".
+     */
+    function formatDateTime(value) {
+        const date =
+            parseDate(value);
+
+        if (!date) {
+            return 'Sin lectura';
+        }
+
+        return date.toLocaleString(
+            'es-ES',
+            {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            }
+        );
+    }
+
+
+    /**
+     * Formatea una metrica numerica junto a su unidad.
+     *
+     * @param {number|null|undefined} value Valor numerico.
+     * @param {string} unit Unidad que debe mostrarse.
+     * @param {number} digits Numero de decimales.
+     * @returns {string} Valor formateado o "--".
+     */
+    function formatMetric(
+        value,
+        unit,
+        digits = 1
+    ) {
+        if (
+            value === null
+            || value === undefined
+        ) {
+            return '--';
+        }
+
+        /*
+         * trim() elimina espacios sobrantes cuando la unidad pudiera ser vacia.
+         */
+        return `${value.toFixed(digits)} ${unit}`.trim();
+    }
+
+
+    /**
+     * Calcula la media aritmetica de una coleccion ignorando nulos.
+     *
+     * @param {Array<number|null|undefined>} values Valores que deben promediarse.
+     * @returns {number|null} Media calculada o null cuando no hay valores validos.
+     */
+    function average(values) {
+        /*
+         * filter() conserva solamente valores utilizables.
+         */
+        const valid =
+            values.filter(
+                value =>
+                    value !== null
+                    && value !== undefined
+            );
+
+        if (!valid.length) {
+            return null;
+        }
+
+        /*
+         * reduce() acumula la suma de todos los valores.
+         */
+        return valid.reduce(
+            (acc, value) =>
+                acc + value,
+            0
+        ) / valid.length;
+    }
+
+
+    /**
+     * Construye un indice nodo_id -> lectura reciente.
+     *
+     * Map permite recuperar posteriormente una lectura concreta sin recorrer
+     * repetidamente todo el array.
+     *
+     * @returns {Map<string, Object>} Mapa de lecturas por identificador.
+     */
+    function readingById() {
+        const map =
+            new Map();
+
+        recentNodes.forEach(
+            item =>
+                map.set(
+                    item.nodo_id,
+                    item
+                )
+        );
+
+        return map;
+    }
+
+
+    /**
+     * Construye un indice nodo_id -> configuracion del nodo.
+     *
+     * @returns {Map<string, Object>} Mapa de configuraciones por identificador.
+     */
+    function configuredNodeById() {
+        const map =
+            new Map();
+
+        configuredNodes.forEach(
+            item =>
+                map.set(
+                    item.nodo_id,
+                    item
+                )
+        );
+
+        return map;
+    }
+
+
+    /**
+     * Infiere la zona funcional a la que pertenece un nodo.
+     *
+     * Se combinan identificador, nombre y tipo en una unica cadena normalizada en
+     * mayusculas. Posteriormente se aplican reglas de palabras clave.
+     *
+     * @param {Object} node Nodo configurado.
+     * @returns {string} Identificador de zona.
+     */
+    function inferZoneId(node) {
+        const text =
+            `${node.nodo_id || ''} ${node.nombre || ''} ${node.tipo || ''}`
+                .toUpperCase();
+
+        /*
+         * ZONA EXTERIOR
+         */
+        if (
+            text.includes('EXTERIOR')
+        ) {
+            return 'EXTERIOR';
+        }
+
+        /*
+         * ZONA DE ALMACEN
+         */
+        if (
+            text.includes('ALMACEN')
+            || text.includes('CARGA')
+            || text.includes('LOGIST')
+        ) {
+            return 'ALMACEN';
+        }
+
+        /*
+         * SALAS TECNICAS
+         */
+        if (
+            text.includes('CALDERA')
+            || text.includes('FRIO')
+            || text.includes('SALA')
+            || text.includes('TECNIC')
+        ) {
+            return 'SALAS_TECNICAS';
+        }
+
+        /*
+         * PRODUCCION
+         */
+        if (
+            text.includes('LINEA')
+            || text.includes('MAQUINA')
+            || text.includes('PROD')
+            || text.includes('ENVAS')
+            || text.includes('FISICO_ARDUINO')
+            || text.includes('ARDUINO')
+        ) {
+            return 'PRODUCCION';
+        }
+
+        /*
+         * Los nodos que no coinciden con ninguna regla se conservan en OTROS para
+         * evitar descartarlos.
+         */
+        return 'OTROS';
+    }
+
+
+    /**
+     * Agrupa todos los nodos activos por zona.
+     *
+     * @returns {Map<string, Array<Object>>} Mapa zona -> nodos.
+     */
+    function zoneNodesMap() {
+        /*
+         * Se crea inicialmente una entrada vacia para cada zona conocida.
+         */
+        const grouped =
+            new Map(
+                ZONES.map(
+                    zone =>
+                        [zone.id, []]
+                )
+            );
+
+        configuredNodes
+            /*
+             * Solamente participan nodos activos.
+             */
+            .filter(
+                node =>
+                    Number(node.activo) === 1
+            )
+            .forEach(node => {
+                const zoneId =
+                    inferZoneId(node);
+
+                /*
+                 * La comprobacion permite soportar nuevas zonas aunque no estuvieran
+                 * creadas inicialmente.
+                 */
+                if (!grouped.has(zoneId)) {
+                    grouped.set(
+                        zoneId,
+                        []
+                    );
+                }
+
+                grouped
+                    .get(zoneId)
+                    .push(node);
+            });
+
+        return grouped;
+    }
+
+
+    /**
+     * Devuelve las alertas pertenecientes a una zona concreta.
+     *
+     * @param {Object} zone Modelo de zona que contiene zone.nodes.
+     * @returns {Array<Object>} Alertas asociadas.
+     */
+    function alertsByZone(zone) {
+        return allAlerts.filter(
+            alert =>
+                zone.nodes.includes(
+                    alert.nodo_id
+                )
+        );
+    }
+
+
+    /**
+     * Cuenta el numero de alertas acumuladas de un nodo.
+     *
+     * @param {string} nodeId Identificador del nodo.
+     * @returns {number} Numero de alertas encontradas.
+     */
+    function nodeAlertCount(nodeId) {
+        return allAlerts.filter(
+            alert =>
+                alert.nodo_id === nodeId
+        ).length;
+    }
+
+
+    /**
+     * Traduce las lecturas y alertas de una zona a un estado cualitativo.
+     *
+     * @param {Array<Object>} zoneReadings Lecturas recientes de la zona.
+     * @param {Array<Object>} zoneAlerts Alertas acumuladas.
+     * @returns {Object} Etiqueta y clase CSS del estado.
+     */
+    function zoneStatus(
+        zoneReadings,
+        zoneAlerts
+    ) {
+        /*
+         * Sin lecturas recientes no puede evaluarse correctamente el estado.
+         */
+        if (!zoneReadings.length) {
+            return {
+                label: 'Sin datos',
+                className: 'status-offline'
+            };
+        }
+
+        /*
+         * Tres o mas alertas acumuladas clasifican la zona como critica.
+         */
+        if (zoneAlerts.length >= 3) {
+            return {
+                label: 'Critica',
+                className: 'status-alert'
+            };
+        }
+
+        /*
+         * Entre una y dos alertas colocan la zona en vigilancia.
+         */
+        if (zoneAlerts.length >= 1) {
+            return {
+                label: 'En vigilancia',
+                className: 'status-warn'
+            };
+        }
+
+        return {
+            label: 'Estable',
+            className: 'status-ok'
+        };
+    }
+
+
+    /**
+     * Construye el modelo analitico completo de todas las zonas.
+     *
+     * En esta funcion se combinan:
+     * - Nodos configurados.
+     * - Lecturas recientes.
+     * - Alertas acumuladas.
+     *
+     * Tambien se calculan medias, nodos destacados, ultima lectura y estado.
+     *
+     * @returns {Array<Object>} Zonas enriquecidas con informacion analitica.
+     */
+    function buildZoneData() {
+        /*
+         * Los mapas auxiliares reducen busquedas repetitivas.
+         */
+        const readingsMap =
+            readingById();
+
+        const configuredMap =
+            configuredNodeById();
+
+        const groupedNodes =
+            zoneNodesMap();
+
+
+        /*
+         * Cada definicion base de ZONES se transforma en un modelo enriquecido.
+         */
+        return ZONES.map(zone => {
+            /*
+             * Nodos configurados dentro de la zona actual.
+             */
+            const zoneConfiguredNodes =
+                groupedNodes.get(zone.id)
+                || [];
+
+            /*
+             * Se extraen solamente sus identificadores.
+             */
+            const zoneNodeIds =
+                zoneConfiguredNodes.map(
+                    node =>
+                        node.nodo_id
+                );
+
+
+            /*
+             * LECTURAS RECIENTES DE LA ZONA
+             * ---------------------------------------------------------------------
+             *
+             * map() intenta recuperar cada lectura desde readingsMap.
+             * filter(Boolean) elimina los undefined de nodos sin lectura reciente.
+             */
+            const readings =
+                zoneNodeIds
+                    .map(
+                        nodeId =>
+                            readingsMap.get(nodeId)
+                    )
+                    .filter(Boolean);
+
+
+            /*
+             * ALERTAS DE LA ZONA
+             * ---------------------------------------------------------------------
+             */
+            const zoneAlerts =
+                allAlerts.filter(
+                    alert =>
+                        zoneNodeIds.includes(
+                            alert.nodo_id
+                        )
+                );
+
+
+            /*
+             * MEDIAS AMBIENTALES
+             * ---------------------------------------------------------------------
+             */
+            const avgTemp =
+                average(
+                    readings.map(
+                        item =>
+                            parseNumber(
+                                item.temperatura
+                            )
+                    )
+                );
+
+            const avgHum =
+                average(
+                    readings.map(
+                        item =>
+                            parseNumber(
+                                item.humedad
+                            )
+                    )
+                );
+
+            const avgNoise =
+                average(
+                    readings.map(
+                        item =>
+                            parseNumber(
+                                item.sonido
+                            )
+                    )
+                );
+
+            const avgPressure =
+                average(
+                    readings.map(
+                        item =>
+                            parseNumber(
+                                item.presion
+                            )
+                    )
+                );
+
+
+            /*
+             * NODO CON MAYOR TEMPERATURA
+             * ---------------------------------------------------------------------
+             *
+             * Se transforma cada lectura en {nodeId, value}, se eliminan valores
+             * nulos y se ordena de mayor a menor.
+             */
+            const hottestNode =
+                readings
+                    .map(item => ({
+                        nodeId: item.nodo_id,
+                        value:
+                            parseNumber(
+                                item.temperatura
+                            )
+                    }))
+                    .filter(
+                        item =>
+                            item.value !== null
+                    )
+                    .sort(
+                        (a, b) =>
+                            b.value - a.value
+                    )[0]
+                || null;
+
+
+            /*
+             * NODO CON MAYOR RUIDO
+             * ---------------------------------------------------------------------
+             */
+            const noisiestNode =
+                readings
+                    .map(item => ({
+                        nodeId: item.nodo_id,
+                        value:
+                            parseNumber(
+                                item.sonido
+                            )
+                    }))
+                    .filter(
+                        item =>
+                            item.value !== null
+                    )
+                    .sort(
+                        (a, b) =>
+                            b.value - a.value
+                    )[0]
+                || null;
+
+
+            /*
+             * NODO MAS COMPROMETIDO
+             * ---------------------------------------------------------------------
+             *
+             * El criterio utilizado es el numero total de alertas acumuladas.
+             */
+            const mostCriticalNode =
+                zoneNodeIds
+                    .map(nodeId => ({
+                        nodeId,
+                        total:
+                            nodeAlertCount(
+                                nodeId
+                            )
+                    }))
+                    .sort(
+                        (a, b) =>
+                            b.total - a.total
+                    )[0]
+                || null;
+
+
+            /*
+             * ULTIMA LECTURA DE LA ZONA
+             * ---------------------------------------------------------------------
+             *
+             * Se convierten las fechas a Date, se eliminan fechas invalidas y se
+             * ordenan de mas reciente a mas antigua.
+             */
+            const lastReading =
+                readings
+                    .map(item => ({
+                        nodeId:
+                            item.nodo_id,
+
+                        date:
+                            parseDate(
+                                item.fecha_hora
+                            ),
+
+                        raw:
+                            item.fecha_hora
+                    }))
+                    .filter(
+                        item =>
+                            item.date
+                    )
+                    .sort(
+                        (a, b) =>
+                            b.date - a.date
+                    )[0]
+                || null;
+
+
+            /*
+             * El operador spread ...zone copia id, name y description al nuevo
+             * objeto antes de incorporar el resto de propiedades calculadas.
+             */
+            return {
+                ...zone,
+                nodes: zoneNodeIds,
+                configured: zoneConfiguredNodes,
+
+                /*
+                 * Se conserva la metadata de configuracion asociada a cada nodo.
+                 */
+                configuredMeta:
+                    zoneConfiguredNodes.map(
+                        node =>
+                            configuredMap.get(
+                                node.nodo_id
+                            )
+                            || node
+                    ),
+
+                readings,
+                zoneAlerts,
+                avgTemp,
+                avgHum,
+                avgNoise,
+                avgPressure,
+                hottestNode,
+                noisiestNode,
+                mostCriticalNode,
+                lastReading,
+
+                /*
+                 * El estado se calcula a partir de lecturas y alertas.
+                 */
+                status:
+                    zoneStatus(
+                        readings,
+                        zoneAlerts
+                    )
+            };
+        });
+    }
+
+
+    /**
+     * Actualiza los cuatro indicadores generales de la pagina.
+     *
+     * @param {Array<Object>} zones Zonas que permanecen visibles tras los filtros.
+     * @returns {void}
+     */
+    function renderSummary(zones) {
+        /*
+         * reduce() suma el numero de nodos configurados en todas las zonas.
+         */
+        const totalNodes =
+            zones.reduce(
+                (acc, zone) =>
+                    acc + zone.nodes.length,
+                0
+            );
+
+        /*
+         * Numero total de nodos que cuentan con una lectura reciente.
+         */
+        const totalWithReading =
+            zones.reduce(
+                (acc, zone) =>
+                    acc + zone.readings.length,
+                0
+            );
+
+        /*
+         * Se copia el array mediante [...zones] antes de sort() para no alterar el
+         * orden del array original.
+         */
+        const worstZone =
+            [...zones]
+                .sort(
+                    (a, b) =>
+                        b.zoneAlerts.length
+                        - a.zoneAlerts.length
+                )[0];
+
+        /*
+         * Se obtiene la lectura mas reciente entre todas las zonas.
+         */
+        const latest =
+            zones
+                .map(
+                    zone =>
+                        zone.lastReading
+                )
+                .filter(Boolean)
+                .sort(
+                    (a, b) =>
+                        b.date - a.date
+                )[0];
+
+
+        /*
+         * NUMERO DE ZONAS
+         */
+        document
+            .getElementById('summaryZones')
+            .textContent =
+                zones.length;
+
+
+        /*
+         * NUMERO DE NODOS
+         */
+        document
+            .getElementById('summaryNodes')
+            .textContent =
+                totalNodes;
+
+
+        /*
+         * Se calculan tambien los nodos activos por origen.
+         */
+        const simulated =
+            configuredNodes.filter(
+                node =>
+                    Number(node.activo) === 1
+                    && node.origen === 'SIMULADO'
+            ).length;
+
+        const physical =
+            configuredNodes.filter(
+                node =>
+                    Number(node.activo) === 1
+                    && node.origen === 'FISICO'
+            ).length;
+
+        document
+            .getElementById('summaryNodesDetail')
+            .textContent =
+                `${simulated} simulados | ${physical} fisicos | ${totalWithReading} con lectura reciente`;
+
+
+        /*
+         * ZONA CON MAS ALERTAS
+         */
+        document
+            .getElementById('summaryWorst')
+            .textContent =
+                worstZone
+                    ? worstZone.name
+                    : '--';
+
+        document
+            .getElementById('summaryWorstDetail')
+            .textContent =
+                worstZone
+                    ? `${worstZone.zoneAlerts.length} alertas registradas`
+                    : 'Sin incidencias';
+
+
+        /*
+         * ULTIMA LECTURA GLOBAL
+         */
+        document
+            .getElementById('summaryLast')
+            .textContent =
+                latest
+                    ? latest.date.toLocaleTimeString(
+                        'es-ES'
+                    )
+                    : '--:--:--';
+
+        document
+            .getElementById('summaryLastDetail')
+            .textContent =
+                latest
+                    ? `${latest.nodeId} actualizo ${latest.date.toLocaleDateString('es-ES')}`
+                    : 'Sin lecturas';
+    }
+
+
+    /**
+     * Aplica busqueda, ordenacion y renderizado final de las zonas.
+     *
+     * @returns {void}
+     */
+    function renderZones() {
+        /*
+         * Se normaliza el texto de busqueda para ignorar mayusculas y espacios
+         * externos.
+         */
+        const search =
+            document
+                .getElementById('searchInput')
+                .value
+                .trim()
+                .toLowerCase();
+
+        /* Criterio de ordenacion seleccionado. */
+        const sort =
+            document
+                .getElementById('sortSelect')
+                .value;
+
+        /*
+         * Se construye el modelo analitico completo antes de aplicar filtros.
+         */
+        let zones =
+            buildZoneData();
+
+
+        /*
+         * Las zonas totalmente vacias se eliminan de la comparativa.
+         */
+        zones =
+            zones.filter(
+                zone =>
+                    zone.nodes.length > 0
+                    || zone.readings.length > 0
+            );
+
+
+        /*
+         * BUSQUEDA
+         * ---------------------------------------------------------------------
+         *
+         * Se crea un texto compuesto por nombre, descripcion y nodos incluidos.
+         */
+        zones =
+            zones.filter(zone => {
+                const haystack = [
+                    zone.name,
+                    zone.description,
+                    ...zone.nodes
+                ]
+                    .join(' ')
+                    .toLowerCase();
+
+                /*
+                 * Si search esta vacio se conservan todas las zonas.
+                 */
+                return !search
+                    || haystack.includes(search);
+            });
+
+
+        /*
+         * CRITERIOS DE ORDENACION
+         * ---------------------------------------------------------------------
+         */
+        const sorters = {
+            /*
+             * Mayor numero de alertas primero.
+             */
+            alerts:
+                (a, b) =>
+                    b.zoneAlerts.length
+                    - a.zoneAlerts.length,
+
+            /*
+             * El operador ?? utiliza -999 para zonas sin temperatura.
+             */
+            temp:
+                (a, b) =>
+                    (b.avgTemp ?? -999)
+                    - (a.avgTemp ?? -999),
+
+            /*
+             * Mayor humedad media primero.
+             */
+            humidity:
+                (a, b) =>
+                    (b.avgHumidity ?? -999)
+                    - (a.avgHumidity ?? -999),
+
+            /*
+             * Mayor ruido medio primero.
+             */
+            noise:
+                (a, b) =>
+                    (b.avgNoise ?? -999)
+                    - (a.avgNoise ?? -999),
+
+            /*
+             * Mayor presion media primero.
+             */
+            pressure:
+                (a, b) =>
+                    (b.avgPressure ?? -999)
+                    - (a.avgPressure ?? -999),
+
+            /*
+             * localeCompare() realiza una comparacion alfabetica adaptada a espanol.
+             */
+            name:
+                (a, b) =>
+                    a.name.localeCompare(
+                        b.name,
+                        'es'
+                    )
+        };
+
+        /*
+         * Si por algun motivo el criterio recibido no existe se utiliza alerts.
+         */
+        zones.sort(
+            sorters[sort]
+            || sorters.alerts
+        );
+
+
+        /*
+         * Los KPIs superiores se recalculan utilizando las zonas actualmente
+         * visibles.
+         */
+        renderSummary(zones);
+
+
+        const container =
+            document.getElementById(
+                'zonesGrid'
+            );
+
+
+        /*
+         * ESTADO SIN RESULTADOS
+         */
+        if (!zones.length) {
+            container.innerHTML =
+                '<div class="empty-state">No hay zonas que coincidan con la busqueda actual.</div>';
+            return;
+        }
+
+
+        /*
+         * RENDERIZADO DE TARJETAS
+         * ---------------------------------------------------------------------
+         *
+         * map() convierte cada modelo de zona en un fragmento HTML y join('')
+         * concatena todas las tarjetas.
+         */
+        container.innerHTML =
+            zones.map(zone => `
+                <article class="zone-card">
+
+                    <div class="zone-head">
+                        <div>
+                            <h5 class="zone-title">
+                                ${zone.name}
+                            </h5>
+
+                            <p class="zone-subtitle">
+                                ${zone.description}
+                            </p>
+                        </div>
+
+                        <span class="zone-status ${zone.status.className}">
+                            ${zone.status.label}
+                        </span>
+                    </div>
+
+
+                    <div class="metrics-grid">
+
+                        <div class="metric-box">
+                            <div class="metric-label">
+                                Temp. media
+                            </div>
+
+                            <div class="metric-value">
+                                ${formatMetric(zone.avgTemp, 'C', 1)}
+                            </div>
+
+                            <div class="metric-detail">
+                                ${
+                                    zone.hottestNode
+                                        ? `Pico: ${zone.hottestNode.nodeId}`
+                                        : 'Sin datos'
+                                }
+                            </div>
+                        </div>
+
+
+                        <div class="metric-box">
+                            <div class="metric-label">
+                                Humedad media
+                            </div>
+
+                            <div class="metric-value">
+                                ${formatMetric(zone.avgHum, '%', 1)}
+                            </div>
+
+                            <div class="metric-detail">
+                                ${zone.readings.length} con lectura | ${zone.nodes.length} configurados
+                            </div>
+                        </div>
+
+
+                        <div class="metric-box">
+                            <div class="metric-label">
+                                Ruido medio
+                            </div>
+
+                            <div class="metric-value">
+                                ${formatMetric(zone.avgNoise, 'dB', 1)}
+                            </div>
+
+                            <div class="metric-detail">
+                                ${
+                                    zone.noisiestNode
+                                        ? `Mayor ruido: ${zone.noisiestNode.nodeId}`
+                                        : 'Sin datos'
+                                }
+                            </div>
+                        </div>
+
+
+                        <div class="metric-box">
+                            <div class="metric-label">
+                                Presion media
+                            </div>
+
+                            <div class="metric-value">
+                                ${formatMetric(zone.avgPressure, 'hPa', 1)}
+                            </div>
+
+                            <div class="metric-detail">
+                                ${zone.zoneAlerts.length} alertas acumuladas
+                            </div>
+                        </div>
+
+                    </div>
+
+
+                    <div class="zone-block">
+                        <div class="block-title">
+                            Nodos incluidos
+                        </div>
+
+                        <div class="chip-list">
+                            ${
+                                zone.nodes
+                                    .map(
+                                        nodeId =>
+                                            `<span class="chip">${nodeId}</span>`
+                                    )
+                                    .join('')
+                            }
+                        </div>
+                    </div>
+
+
+                    <div class="zone-footer">
+
+                        <div class="footer-box">
+                            <div class="footer-title">
+                                Nodo mas comprometido
+                            </div>
+
+                            <div class="footer-value">
+                                ${
+                                    zone.mostCriticalNode
+                                    && zone.mostCriticalNode.total > 0
+
+                                        /*
+                                         * encodeURIComponent() protege el
+                                         * identificador antes de incorporarlo a la
+                                         * URL de detalle.
+                                         */
+                                        ? `<a href="detalle-nodo.html?nodo=${encodeURIComponent(zone.mostCriticalNode.nodeId)}">${zone.mostCriticalNode.nodeId}</a> (${zone.mostCriticalNode.total} alertas)`
+
+                                        : 'Sin incidencias destacadas'
+                                }
+                            </div>
+                        </div>
+
+
+                        <div class="footer-box">
+                            <div class="footer-title">
+                                Ultima lectura de zona
+                            </div>
+
+                            <div class="footer-value">
+                                ${
+                                    zone.lastReading
+
+                                        ? `${zone.lastReading.nodeId}<br><span class="text-muted">${formatDateTime(zone.lastReading.raw)}</span>`
+
+                                        : 'Sin datos recientes'
+                                }
+                            </div>
+                        </div>
+
+                    </div>
+                </article>
+            `).join('');
+    }
+
+
+    /**
+     * Inicializa el selector personalizado utilizado para ordenar las zonas.
+     *
+     * El SELECT nativo permanece oculto y conserva el valor real. El boton y el
+     * menu personalizados se utilizan como capa visual.
+     *
+     * @returns {void}
+     */
+    function initSortSelect() {
+        const shell =
+            document.getElementById(
+                'sort-shell'
+            );
+
+        const nativeSelect =
+            document.getElementById(
+                'sortSelect'
+            );
+
+        const button =
+            document.getElementById(
+                'sort-select-btn'
+            );
+
+        const menu =
+            document.getElementById(
+                'sort-select-menu'
+            );
+
+        /*
+         * Array.from() convierte la NodeList de opciones en un array convencional.
+         */
+        const options =
+            Array.from(
+                menu.querySelectorAll(
+                    '.custom-select-option'
+                )
+            );
+
+
+        /**
+         * Sincroniza el texto y la opcion activa del selector personalizado.
+         *
+         * @returns {void}
+         */
+        function syncLabel() {
+            const selected =
+                nativeSelect.options[
+                    nativeSelect.selectedIndex
+                ];
+
+            button.textContent =
+                selected
+                    ? selected.text
+                    : 'Seleccionar';
+
+            /*
+             * classList.toggle() con segundo parametro agrega o elimina la clase
+             * segun el resultado booleano.
+             */
+            options.forEach(option => {
+                option.classList.toggle(
+                    'active',
+                    option.dataset.value
+                        === nativeSelect.value
+                );
+            });
+        }
+
+
+        /*
+         * El boton principal abre o cierra el desplegable.
+         */
+        button.addEventListener(
+            'click',
+            () => {
+                const isOpen =
+                    shell.classList.toggle(
+                        'open'
+                    );
+
+                /*
+                 * aria-expanded mejora la accesibilidad indicando el estado del menu.
+                 */
+                button.setAttribute(
+                    'aria-expanded',
+                    String(isOpen)
+                );
+            }
+        );
+
+
+        /*
+         * Cada opcion actualiza el SELECT real y vuelve a renderizar las zonas.
+         */
+        options.forEach(option => {
+            option.addEventListener(
+                'click',
+                () => {
+                    nativeSelect.value =
+                        option.dataset.value;
+
+                    shell.classList.remove(
+                        'open'
+                    );
+
+                    button.setAttribute(
+                        'aria-expanded',
+                        'false'
+                    );
+
+                    syncLabel();
+
+                    renderZones();
+                }
+            );
+        });
+
+
+        /*
+         * Pulsar fuera del componente cierra el menu.
+         */
+        document.addEventListener(
+            'click',
+            event => {
+                if (
+                    !shell.contains(
+                        event.target
+                    )
+                ) {
+                    shell.classList.remove(
+                        'open'
+                    );
+
+                    button.setAttribute(
+                        'aria-expanded',
+                        'false'
+                    );
+                }
+            }
+        );
+
+        /* Sincronizacion inicial. */
+        syncLabel();
+    }
+
+
+    /**
+     * Descarga en paralelo las fuentes necesarias y actualiza la vista.
+     *
+     * Promise.all() permite esperar a las tres peticiones simultaneamente en lugar
+     * de realizarlas de forma secuencial.
+     *
+     * @returns {Promise<void>}
+     */
+    async function loadData() {
+        try {
+            /*
+             * Se lanzan simultaneamente:
+             * - Configuracion de nodos.
+             * - Lecturas recientes.
+             * - Ultimas 400 alertas.
+             */
+            const [
+                nodesResp,
+                recentResp,
+                alertsResp
+            ] = await Promise.all([
+                fetch(
+                    `${API_BASE}/api/nodos`
+                ),
+                fetch(
+                    `${API_BASE}/api/datos_recientes`
+                ),
+                fetch(
+                    `${API_BASE}/api/alertas?limit=400`
+                )
+            ]);
+
+            /*
+             * Cada respuesta JSON se almacena en su cache correspondiente.
+             */
+            configuredNodes =
+                await nodesResp.json();
+
+            recentNodes =
+                await recentResp.json();
+
+            allAlerts =
+                await alertsResp.json();
+
+            /*
+             * Una vez disponibles las tres fuentes se reconstruye la vista.
+             */
+            renderZones();
+
+        } catch (error) {
+            /*
+             * Ante un fallo global se registra el error y se sustituye el contenido
+             * por un estado informativo.
+             */
+            console.error(
+                'No se pudieron cargar las zonas',
+                error
+            );
+
+            document
+                .getElementById('zonesGrid')
+                .innerHTML =
+                    '<div class="empty-state">No se pudo cargar el analisis por zonas.</div>';
+        }
+    }
+
+
+    /*
+     * ============================================================================
+     * EVENTOS DE LOS CONTROLES
+     * ============================================================================
+     */
+
+    /*
+     * La busqueda se aplica mientras el usuario escribe.
+     */
+    document
+        .getElementById('searchInput')
+        .addEventListener(
+            'input',
+            renderZones
+        );
+
+    /*
+     * El SELECT nativo mantiene tambien un listener de cambio.
+     */
+    document
+        .getElementById('sortSelect')
+        .addEventListener(
+            'change',
+            renderZones
+        );
+
+    /*
+     * El boton de refresco fuerza una nueva consulta al backend.
+     */
+    document
+        .getElementById('refreshBtn')
+        .addEventListener(
+            'click',
+            loadData
+        );
+
+
+    /*
+     * ============================================================================
+     * INICIALIZACION GENERAL
+     * ============================================================================
+     */
+
+    /* Se inicializa el selector visual de orden. */
+    initSortSelect();
+
+    /*
+     * Primera carga inmediata.
+     */
+    loadData();
+
+    /*
+     * El analisis se vuelve a descargar y reconstruir cada 5.000 milisegundos.
+     */
+    setInterval(
+        loadData,
+        5000
+    );
+</script>
+<!--
+    Script compartido encargado de gestionar el tema visual y conservar la
+    preferencia seleccionada en el resto de la aplicacion.
+-->
+<script src="theme.js"></script>
+
+</body>
+</html>

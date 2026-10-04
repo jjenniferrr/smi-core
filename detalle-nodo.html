@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <!--
+        ============================================================================
+        ARCHIVO: detalle-nodo.html
+        DESCRIPCION GENERAL
+        ============================================================================
+
+        Este archivo implementa la vista de detalle individual de un nodo del
+        sistema S.M.I. CORE.
+
+        La pantalla permite consultar la informacion tecnica asociada a un unico
+        nodo o sensor de planta. El identificador del nodo se recibe mediante un
+        parametro incluido en la URL y, a partir de dicho identificador, la vista
+        solicita al backend todos los datos necesarios para construir el detalle.
+
+        La informacion mostrada incluye:
+        - Estado actual del nodo.
+        - Fecha de la ultima lectura disponible.
+        - Ultima temperatura registrada.
+        - Numero de alertas asociadas.
+        - Configuracion activa de umbrales.
+        - Historial reciente de alertas.
+        - Ultimas lecturas de telemetria.
+        - Estado real de conexion cuando el nodo corresponde al Arduino fisico.
+
+        La vista diferencia entre la informacion historica almacenada y la conexion
+        real del dispositivo fisico. En el caso concreto del nodo FISICO_ARDUINO,
+        se consulta adicionalmente el estado del enlace serie. De esta manera se
+        evita mostrar datos historicos como si pertenecieran a una conexion activa.
+
+        FLUJO GENERAL DE FUNCIONAMIENTO
+        --------------------------------
+        1. Se obtiene el identificador del nodo desde la query string de la URL.
+        2. Se solicita al backend el detalle completo del nodo.
+        3. Si se trata del Arduino fisico, se consulta tambien su estado de conexion.
+        4. Se obtiene la ultima lectura disponible del conjunto de mediciones.
+        5. Se construyen las tarjetas de resumen y configuracion.
+        6. Se generan dinamicamente las tablas de alertas y telemetria.
+        7. Si el dispositivo fisico se encuentra desconectado, se informa de ello
+           y se evita presentar datos historicos como lecturas en vivo.
+
+        La vista esta orientada principalmente a labores de inspeccion puntual,
+        seguimiento tecnico y trazabilidad del comportamiento de cada nodo.
+        ============================================================================
+    -->
+    <!-- Define la codificacion de caracteres utilizada por el documento. -->
+    <meta charset="UTF-8">
+
+    <!-- Permite adaptar correctamente la interfaz a dispositivos moviles. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Titulo mostrado en la pestana del navegador. -->
+    <title>S.M.I. CORE | Detalle de Nodo</title>
+
+    <!--
+        Se cargan las tipografias de la interfaz. Inter se utiliza para los textos
+        generales y JetBrains Mono para fechas, valores numericos y datos tecnicos.
+    -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+
+    <!-- Bootstrap aporta clases auxiliares reutilizadas en la presentacion. -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!--
+        Se aplica el tema guardado antes de representar la interfaz para evitar
+        cambios visuales durante la carga. Si no existe preferencia, se usa oscuro.
+    -->
+    <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('smi-theme') || 'dark');</script>
+
+    <!-- Hoja de estilos compartida por las distintas vistas del sistema. -->
+    <link href="theme.css" rel="stylesheet">
+    <style>
+        /*
+         * VARIABLES GLOBALES DE ESTILO
+         * -------------------------------------------------------------------------
+         * Las variables CSS centralizan la paleta principal y permiten reutilizar
+         * los mismos colores en todos los componentes de la vista.
+         */
+        :root {
+            --bg-main: #0d1117;
+            --panel-bg: #161b22;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --accent-orange: #d29922;
+            --border: #30363d;
+            --text-main: #e6edf3;
+            --text-dim: #7d8590;
+        }
+        /*
+         * CONFIGURACION GENERAL DEL DOCUMENTO
+         * -------------------------------------------------------------------------
+         * Se establece el fondo, color del texto y tipografia principal de la vista.
+         */
+        body {
+            margin: 0; background: var(--bg-main); color: var(--text-main);
+            font-family: 'Inter', sans-serif; font-size: 14px;
+        }
+        *, *::before, *::after { box-sizing: border-box; }
+        .text-muted { color: #9aa4b2 !important; }
+        /*
+         * El contenido principal queda centrado y limitado a un ancho maximo para
+         * evitar lineas excesivamente largas en pantallas de gran resolucion.
+         */
+        main { padding: 34px; max-width: 1300px; margin: 0 auto; }
+        .topbar { display: block; margin-bottom: 24px; }
+        /*
+         * BOTON DE RETORNO
+         * -------------------------------------------------------------------------
+         * El acceso de regreso al dashboard se mantiene fijo en escritorio para
+         * facilitar la navegacion desde la ficha tecnica del nodo.
+         */
+        .back-arrow {
+            position: fixed;
+            left: 64px;
+            top: 32px;
+            width: 68px;
+            height: 42px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #f0f6fc; text-decoration: none; font-weight: 800;
+            border: 1px solid rgba(88,166,255,0.5);
+            border-radius: 6px;
+            background: rgba(13, 17, 23, 0.9);
+            font-size: 20px;
+            line-height: 1;
+            z-index: 10;
+        }
+        .back-arrow:hover {
+            background: rgba(88,166,255,0.1);
+            color: var(--accent-blue);
+            border-color: rgba(88,166,255,0.55);
+        }
+        .title-block { min-width: 0; }
+        /*
+         * PANELES DE INFORMACION
+         * -------------------------------------------------------------------------
+         * Cada bloque funcional se encapsula visualmente en un panel independiente.
+         */
+        .panel {
+            background: var(--panel-bg); border: 1px solid var(--border);
+            border-radius: 8px; padding: 20px; margin-bottom: 22px;
+        }
+        /*
+         * Las metricas se organizan en una cuadricula de cuatro columnas en
+         * pantallas amplias. Las media queries reducen el numero de columnas.
+         */
+        .grid { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 16px; }
+        /*
+         * TARJETAS DE METRICAS
+         * -------------------------------------------------------------------------
+         * Las tarjetas muestran valores concretos del nodo o de su configuracion.
+         */
+        .metric {
+            background: #0d1117; border: 1px solid var(--border);
+            border-radius: 6px; padding: 14px;
+        }
+        .label { color: var(--text-dim); font-size: 10px; font-weight: 700; text-transform: uppercase; margin-bottom: 8px; }
+        .value { font-family: 'JetBrains Mono', monospace; font-size: 1.25rem; font-weight: 700; }
+        /*
+         * TABLAS DE ALERTAS Y MEDICIONES
+         * -------------------------------------------------------------------------
+         * Ambas tablas comparten la misma estructura visual para mantener
+         * coherencia entre los datos historicos mostrados.
+         */
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 11px 12px; border-bottom: 1px solid var(--border); text-align: left; }
+        th { color: var(--text-dim); font-size: 10px; text-transform: uppercase; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        /*
+         * Estados visuales empleados en las metricas.
+         * - danger: identifica estados inactivos o situaciones de alerta.
+         * - ok: identifica estados activos o sin incidencias.
+         * - offline: representa un dispositivo fisico sin conexion actual.
+         */
+        .danger { color: var(--accent-red); font-weight: 700; }
+        .ok { color: var(--accent-green); font-weight: 700; }
+        .offline { color: var(--text-dim); font-weight: 700; }
+        .table-wrap { overflow-x: hidden; }
+        /*
+         * DISENO RESPONSIVE PARA TABLETS
+         * -------------------------------------------------------------------------
+         * La cuadricula se reduce a dos columnas y el boton de retorno deja de ser
+         * fijo para adaptarse al flujo natural del documento.
+         */
+        @media (max-width: 900px) {
+            main { padding: 28px 18px; }
+            .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .back-arrow { position: static; margin-bottom: 16px; }
+            .topbar { margin-bottom: 18px; }
+            table { min-width: 0; table-layout: fixed; }
+        }
+        /*
+         * DISENO RESPONSIVE PARA MOVILES
+         * -------------------------------------------------------------------------
+         * Las metricas pasan a una unica columna y se ocultan datos secundarios
+         * de las tablas para mantener la legibilidad en pantallas estrechas.
+         */
+        @media (max-width: 560px) {
+            main { padding: 20px 14px; }
+            .grid { grid-template-columns: 1fr; }
+            .panel { padding: 16px; }
+            .value { font-size: 1.1rem; }
+            th, td { padding: 9px 7px; font-size: 11px; overflow-wrap: anywhere; }
+            /*
+             * En la tabla de mediciones se ocultan presion y luz en dispositivos
+             * moviles, conservando fecha, temperatura, humedad y ruido.
+             */
+            #measurementsBody td:nth-child(5),
+            #measurementsBody td:nth-child(6),
+            section:nth-of-type(4) th:nth-child(5),
+            section:nth-of-type(4) th:nth-child(6) { display: none; }
+            /*
+             * En la tabla de alertas se oculta la columna de umbral en pantallas
+             * muy estrechas para priorizar los datos principales.
+             */
+            #alertsBody td:nth-child(4),
+            section:nth-of-type(3) th:nth-child(4) { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<!--
+    ============================================================================
+    CONTENIDO PRINCIPAL DE LA FICHA DEL NODO
+    ============================================================================
+    Todos los datos internos se rellenan dinamicamente mediante JavaScript una vez
+    que el backend devuelve la informacion correspondiente al nodo solicitado.
+-->
+<main>
+    <!-- Acceso directo para regresar a la vista principal del dashboard. -->
+    <a class="back-arrow" href="index.html" title="Volver al dashboard" aria-label="Volver al dashboard">←</a>
+    <!--
+        CABECERA DEL NODO
+        El titulo y subtitulo se sustituyen al cargar los datos del nodo.
+    -->
+    <div class="topbar">
+        <div class="title-block">
+            <h3 class="fw-bold mb-1" id="title">Detalle de Nodo</h3>
+            <div class="text-muted small" id="subtitle">Cargando...</div>
+        </div>
+    </div>
+
+    <!--
+        RESUMEN DEL ESTADO
+        JavaScript genera aqui las tarjetas correspondientes al estado actual,
+        ultima lectura, temperatura y numero de alertas.
+    -->
+    <section class="panel">
+        <div class="grid" id="summary"></div>
+    </section>
+
+    <!--
+        CONFIGURACION ACTIVA
+        Este bloque muestra los umbrales operativos asociados al nodo.
+    -->
+    <section class="panel">
+        <h6 class="fw-bold mb-3">Configuracion activa</h6>
+        <div class="grid" id="config"></div>
+    </section>
+
+    <!--
+        HISTORIAL DE ALERTAS
+        El cuerpo de la tabla se genera dinamicamente con las alertas recibidas.
+    -->
+    <section class="panel">
+        <h6 class="fw-bold mb-3">Alertas recientes</h6>
+        <div class="table-wrap"><table>
+            <thead>
+                <tr>
+                    <th>Fecha</th>
+                    <th>Tipo</th>
+                    <th>Valor</th>
+                    <th>Umbral</th>
+                    <th>Estado</th>
+                </tr>
+            </thead>
+            <tbody id="alertsBody"></tbody>
+        </table></div>
+    </section>
+
+    <!--
+        TELEMETRIA RECIENTE
+        La tabla presenta hasta treinta lecturas recientes para facilitar la
+        inspeccion tecnica del comportamiento del nodo.
+    -->
+    <section class="panel">
+        <h6 class="fw-bold mb-3">Ultimas lecturas</h6>
+        <div class="table-wrap"><table>
+            <thead>
+                <tr>
+                    <th>Fecha</th>
+                    <th>Temp.</th>
+                    <th>Hum.</th>
+                    <th>Ruido</th>
+                    <th>Presion</th>
+                    <th>Luz</th>
+                </tr>
+            </thead>
+            <tbody id="measurementsBody"></tbody>
+        </table></div>
+    </section>
+</main>
+
+<script>
+    /*
+     * ============================================================================
+     * LOGICA DE LA VISTA DE DETALLE DE NODO
+     * ============================================================================
+     *
+     * Este bloque JavaScript se encarga de consultar el backend y construir
+     * dinamicamente la informacion correspondiente al nodo seleccionado.
+     *
+     * Las principales responsabilidades son:
+     * - Obtener el identificador del nodo desde la URL.
+     * - Solicitar al backend el detalle tecnico del nodo.
+     * - Consultar el estado real del Arduino cuando procede.
+     * - Formatear valores numericos de telemetria.
+     * - Generar tarjetas reutilizables de metricas.
+     * - Mostrar alertas y mediciones recientes.
+     * - Diferenciar datos historicos de una conexion fisica actualmente activa.
+     * ============================================================================
+     */
+
+    /*
+     * Determinacion de la URL base utilizada para acceder a la API.
+     *
+     * Si la aplicacion se ejecuta mediante HTTP o HTTPS, se reutiliza el origen
+     * actual del navegador. Si el archivo se abre directamente, se utiliza
+     * localhost:5000 como direccion de desarrollo.
+     */
+    const API_BASE = window.location.protocol.startsWith('http')
+        ? window.location.origin
+        : 'http://localhost:5000';
+
+
+    /**
+     * Genera el codigo HTML correspondiente a una tarjeta de metrica.
+     *
+     * La funcion centraliza la estructura empleada en los bloques de resumen y
+     * configuracion. De este modo, todas las metricas mantienen el mismo formato
+     * visual y se evita repetir manualmente el mismo fragmento HTML.
+     *
+     * @param {string} label Texto descriptivo mostrado sobre el valor.
+     * @param {*} value Valor que se desea presentar en la tarjeta.
+     * @param {string} extraClass Clase CSS opcional para representar estados.
+     * @returns {string} Fragmento HTML correspondiente a la metrica.
+     */
+    function metric(label, value, extraClass = '') {
+        /*
+         * El operador ?? garantiza que valores null o undefined se sustituyan por
+         * "--", evitando que aparezcan literalmente en la interfaz.
+         */
+        return `
+            <div class="metric">
+                <div class="label">${label}</div>
+                <div class="value ${extraClass}">${value ?? '--'}</div>
+            </div>
+        `;
+    }
+
+
+    /**
+     * Convierte un valor a numero y lo formatea con un numero fijo de decimales.
+     *
+     * Esta funcion se utiliza en las lecturas de telemetria para ofrecer una
+     * representacion uniforme de temperatura, humedad, sonido, presion y luz.
+     *
+     * @param {*} value Valor recibido desde el backend.
+     * @param {number} decimals Numero de decimales que deben mostrarse.
+     * @returns {string} Numero formateado o "--" si el valor no es valido.
+     */
+    function formatNumber(value, decimals = 2) {
+        /* Number() intenta convertir el valor recibido a un numero JavaScript. */
+        const n = Number(value);
+
+        /*
+         * Number.isFinite() verifica que el resultado sea realmente un numero
+         * finito. Si lo es, toFixed() aplica la precision solicitada.
+         */
+        return Number.isFinite(n) ? n.toFixed(decimals) : '--';
+    }
+
+
+    /**
+     * Consulta el estado real de conexion del dispositivo Arduino.
+     *
+     * El objetivo consiste en distinguir entre datos historicos almacenados y una
+     * conexion fisica activa. La existencia de lecturas anteriores no implica que
+     * el dispositivo permanezca conectado en el momento actual.
+     *
+     * Si la API no esta disponible o devuelve un error, la funcion responde con
+     * un objeto que identifica el dispositivo como no conectado y el estado como
+     * no disponible.
+     *
+     * @returns {Promise<Object>} Estado de conexion devuelto por el backend.
+     */
+    async function fetchArduinoStatus() {
+        try {
+            /* Se solicita al backend el estado actual del enlace con el Arduino. */
+            const response = await fetch(`${API_BASE}/api/arduino/status`);
+
+            /*
+             * fetch() no considera automaticamente los codigos HTTP de error como
+             * excepciones, por lo que se comprueba response.ok explicitamente.
+             */
+            if (!response.ok) {
+                return { connected: false, unavailable: true };
+            }
+
+            /* La respuesta correcta se convierte de JSON a un objeto JavaScript. */
+            return await response.json();
+        } catch (error) {
+            /*
+             * Cualquier error de red o acceso a la API se interpreta de forma
+             * segura como ausencia de conexion disponible.
+             */
+            return { connected: false, unavailable: true };
+        }
+    }
+
+
+    /**
+     * Carga y representa toda la informacion correspondiente al nodo seleccionado.
+     *
+     * La funcion obtiene el identificador desde el parametro "nodo" de la URL y
+     * realiza la consulta principal al endpoint de detalle.
+     *
+     * Cuando el identificador corresponde al nodo fisico FISICO_ARDUINO, se
+     * consulta simultaneamente el estado real del dispositivo. Posteriormente se
+     * construyen el resumen, la configuracion, las alertas y las mediciones.
+     *
+     * @returns {Promise<void>}
+     */
+    async function loadDetail() {
+        /*
+         * URLSearchParams permite trabajar de forma sencilla con los parametros
+         * incluidos en la query string, por ejemplo:
+         * detalle-nodo.html?nodo=FISICO_ARDUINO
+         */
+        const params = new URLSearchParams(window.location.search);
+
+        /* Se obtiene concretamente el valor asociado al parametro "nodo". */
+        const nodeId = params.get('nodo');
+
+        /*
+         * Si la URL no contiene identificador de nodo, se informa al usuario y se
+         * detiene la ejecucion para evitar realizar una peticion incompleta.
+         */
+        if (!nodeId) {
+            document.getElementById('subtitle').textContent = 'No se ha indicado nodo.';
+            return;
+        }
+
+        /*
+         * Promise.all() permite ejecutar en paralelo las operaciones necesarias.
+         *
+         * La primera promesa solicita siempre el detalle del nodo.
+         * La segunda solamente consulta el estado del Arduino cuando el nodo
+         * seleccionado corresponde al dispositivo fisico. Para cualquier otro
+         * nodo se utiliza Promise.resolve(null), manteniendo la misma estructura
+         * de resultados sin realizar una peticion innecesaria.
+         */
+        const [response, arduinoStatus] = await Promise.all([
+            /*
+             * encodeURIComponent() codifica el identificador antes de incluirlo en
+             * la URL, evitando problemas si contiene caracteres especiales.
+             */
+            fetch(`${API_BASE}/api/nodos/${encodeURIComponent(nodeId)}/detalle`),
+
+            nodeId === 'FISICO_ARDUINO'
+                ? fetchArduinoStatus()
+                : Promise.resolve(null),
+        ]);
+
+        /*
+         * Si el backend no devuelve una respuesta satisfactoria, se muestra un
+         * mensaje informativo y se evita continuar procesando datos inexistentes.
+         */
+        if (!response.ok) {
+            document.getElementById('subtitle').textContent = 'No se pudo cargar el nodo.';
+            return;
+        }
+
+        /*
+         * El backend devuelve un objeto de detalle que contiene la informacion
+         * general del nodo, su configuracion, las alertas y las mediciones.
+         */
+        const detail = await response.json();
+
+        /* Se extrae la informacion general para simplificar accesos posteriores. */
+        const node = detail.node;
+
+        /*
+         * Se considera la primera medicion como la lectura mas reciente, segun el
+         * orden proporcionado por el backend. Si no existe ninguna, se utiliza un
+         * objeto vacio para evitar errores al consultar sus propiedades.
+         */
+        const last = detail.measurements[0] || {};
+
+        /*
+         * Esta variable determina si el nodo fisico debe representarse como
+         * desconectado. Solo se aplica al identificador FISICO_ARDUINO y requiere
+         * que el estado recibido confirme explicitamente connected = true.
+         */
+        const physicalOffline =
+            nodeId === 'FISICO_ARDUINO'
+            && !(arduinoStatus && arduinoStatus.connected);
+
+        /*
+         * Se actualizan el titulo y subtitulo utilizando los datos descriptivos
+         * recibidos desde la API.
+         */
+        document.getElementById('title').textContent = node.nodo_id;
+        document.getElementById('subtitle').textContent =
+            `${node.nombre} · ${node.tipo} · ${node.origen}`;
+
+        /*
+         * ------------------------------------------------------------------------
+         * RESUMEN DEL ESTADO ACTUAL
+         * ------------------------------------------------------------------------
+         *
+         * Se generan cuatro tarjetas:
+         * - Estado del nodo.
+         * - Fecha de la ultima lectura.
+         * - Temperatura mas reciente.
+         * - Numero total de alertas asociadas.
+         *
+         * join('') concatena los fragmentos HTML generados por metric() sin incluir
+         * separadores entre los elementos del array.
+         */
+        document.getElementById('summary').innerHTML = [
+            metric(
+                'Estado',
+
+                /*
+                 * Si el Arduino fisico no esta conectado se prioriza el estado
+                 * DESCONECTADO. Para otros casos se utiliza el campo activo del nodo.
+                 */
+                physicalOffline
+                    ? 'DESCONECTADO'
+                    : (node.activo ? 'ACTIVO' : 'INACTIVO'),
+
+                /*
+                 * La clase visual cambia segun el estado:
+                 * offline para desconexion fisica, ok para activo y danger para
+                 * inactivo.
+                 */
+                physicalOffline
+                    ? 'offline'
+                    : (node.activo ? 'ok' : 'danger')
+            ),
+
+            /*
+             * Cuando el dispositivo fisico esta desconectado se evita presentar una
+             * lectura historica como si fuese una medicion en vivo.
+             */
+            metric(
+                'Ultima lectura',
+                physicalOffline ? '--' : (last.fecha_hora || '--')
+            ),
+
+            metric(
+                'Temperatura',
+                physicalOffline ? '--' : `${formatNumber(last.temperatura)} C`
+            ),
+
+            /*
+             * Si existen alertas se utiliza la clase danger; si no existen, ok.
+             * Para un Arduino desconectado se presenta el estado offline.
+             */
+            metric(
+                'Alertas registradas',
+                physicalOffline ? '--' : detail.alerts.length,
+                physicalOffline
+                    ? 'offline'
+                    : (detail.alerts.length ? 'danger' : 'ok')
+            )
+        ].join('');
+
+        /*
+         * ------------------------------------------------------------------------
+         * CONFIGURACION ACTIVA DEL NODO
+         * ------------------------------------------------------------------------
+         *
+         * Los umbrales se presentan mediante la misma funcion metric() para
+         * mantener la uniformidad visual entre secciones.
+         */
+        document.getElementById('config').innerHTML = [
+            metric('Temp. Max.', `${detail.config.umbral_temp_max} C`),
+            metric('Humedad Min.', `${detail.config.umbral_humedad_min} %`),
+            metric('Humedad Max.', `${detail.config.umbral_humedad_max} %`),
+            metric('Sonido Max.', detail.config.umbral_sonido_max)
+        ].join('');
+
+        /*
+         * ------------------------------------------------------------------------
+         * TABLA DE ALERTAS RECIENTES
+         * ------------------------------------------------------------------------
+         *
+         * La expresion ternaria comprueba dos condiciones:
+         * - Deben existir alertas.
+         * - El dispositivo fisico no debe encontrarse desconectado.
+         *
+         * Si ambas se cumplen, map() transforma cada alerta en una fila HTML.
+         */
+        document.getElementById('alertsBody').innerHTML =
+            detail.alerts.length && !physicalOffline
+                ? detail.alerts.map(alert => `
+                    <tr>
+                        <td class="mono">${alert.fecha_hora}</td>
+                        <td class="danger">${alert.tipo}</td>
+                        <td>${formatNumber(alert.valor)}</td>
+                        <td>${formatNumber(alert.umbral)}</td>
+                        <td>${alert.estado}</td>
+                    </tr>
+                `).join('')
+
+                /*
+                 * Cuando no pueden mostrarse alertas, se presenta un mensaje
+                 * diferente dependiendo de si la causa es la desconexion del
+                 * Arduino o simplemente la ausencia de registros.
+                 */
+                : `<tr>
+                    <td colspan="5" class="text-muted">
+                        ${
+                            physicalOffline
+                                ? 'Arduino no conectado. No se muestran alertas mientras el hardware este offline.'
+                                : 'No hay alertas registradas para este nodo.'
+                        }
+                    </td>
+                </tr>`;
+
+        /*
+         * ------------------------------------------------------------------------
+         * TABLA DE MEDICIONES RECIENTES
+         * ------------------------------------------------------------------------
+         *
+         * Se muestran como maximo treinta registros para evitar cargar una tabla
+         * excesivamente grande en una vista destinada a inspeccion rapida.
+         */
+        document.getElementById('measurementsBody').innerHTML =
+            detail.measurements.length && !physicalOffline
+                ? detail.measurements
+                    /*
+                     * slice(0, 30) selecciona exclusivamente las primeras treinta
+                     * mediciones del array recibido.
+                     */
+                    .slice(0, 30)
+                    .map(row => `
+                        <tr>
+                            <td class="mono">${row.fecha_hora}</td>
+                            <td>${formatNumber(row.temperatura)}</td>
+                            <td>${formatNumber(row.humedad)}</td>
+                            <td>${formatNumber(row.sonido)}</td>
+                            <td>${formatNumber(row.presion)}</td>
+
+                            <!--
+                                La luz se presenta sin decimales, por lo que se
+                                especifica 0 como segundo argumento.
+                            -->
+                            <td>${formatNumber(row.luz, 0)}</td>
+                        </tr>
+                    `).join('')
+
+                /*
+                 * Si no existen lecturas o el hardware fisico esta desconectado,
+                 * se muestra un mensaje explicativo ocupando todas las columnas.
+                 */
+                : `<tr>
+                    <td colspan="6" class="text-muted">
+                        ${
+                            physicalOffline
+                                ? 'Arduino no conectado. Sin lecturas en vivo para este nodo fisico.'
+                                : 'No hay lecturas para este nodo.'
+                        }
+                    </td>
+                </tr>`;
+    }
+
+
+    /*
+     * ============================================================================
+     * INICIALIZACION DE LA VISTA
+     * ============================================================================
+     *
+     * La carga se inicia inmediatamente porque el script se encuentra al final del
+     * documento HTML. En ese momento, los elementos del DOM utilizados por la
+     * funcion ya han sido interpretados y se encuentran disponibles.
+     */
+    loadDetail();
+</script>
+<!--
+    Script compartido encargado de gestionar la apariencia y el tema visual del
+    sistema de forma coherente con el resto de pantallas.
+-->
+<script src="theme.js"></script>
+</body>
+</html>

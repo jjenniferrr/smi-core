@@ -1,0 +1,1958 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <!--
+        ============================================================================
+        ARCHIVO: reportes.html
+        DESCRIPCION GENERAL
+        ============================================================================
+
+        Este archivo implementa el Centro de Reportes del sistema S.M.I. CORE.
+
+        La vista centraliza la generacion y descarga de informes relacionados con
+        la telemetria, las alertas y la trazabilidad de configuracion del sistema.
+
+        Se ofrecen tres bloques principales de informes:
+
+        1. Informe de Telemetria Detallado
+           Permite seleccionar una fecha inicial, una fecha final y, de forma
+           opcional, un nodo concreto. El resultado puede solicitarse en PDF o CSV.
+
+        2. Resumen Critico de Alertas
+           Permite seleccionar un periodo temporal predefinido y filtrar las
+           incidencias por nodo. El informe puede descargarse en PDF o CSV.
+
+        3. Registro de Configuracion
+           Permite exportar el historial asociado a todos los nodos o a un nodo
+           determinado en formato Excel.
+
+        El frontend no genera directamente los documentos. Su responsabilidad
+        consiste en recopilar los filtros seleccionados, construir las URL de los
+        endpoints de reportes e iniciar la descarga del fichero generado por el
+        backend.
+
+        Para mejorar la usabilidad se emplean componentes personalizados:
+        - Flatpickr para seleccionar fechas.
+        - Selectores con busqueda para localizar nodos.
+        - Un desplegable personalizado para seleccionar el periodo de alertas.
+
+        Los nodos disponibles se obtienen dinamicamente mediante el endpoint
+        /api/nodos. Posteriormente se conservan solamente aquellos cuyo estado
+        activo sea igual a 1 y se reutilizan en los tres filtros de nodo.
+
+        FLUJO GENERAL DE FUNCIONAMIENTO
+        --------------------------------
+        1. Al cargarse la pagina se inicializan los calendarios Flatpickr.
+        2. Se inicializan los selectores personalizados.
+        3. Se solicita al backend la lista de nodos.
+        4. Se incorporan los nodos activos a los distintos filtros.
+        5. El usuario selecciona los parametros del informe deseado.
+        6. Cuando procede, se validan los datos introducidos.
+        7. Se construye una URL con los parametros de consulta necesarios.
+        8. Se crea temporalmente un enlace HTML que inicia la descarga.
+        9. El backend genera y devuelve el fichero solicitado.
+
+        La generacion del contenido PDF, CSV o Excel y la validacion definitiva de
+        los permisos y parametros corresponden al backend. Esta pagina actua como
+        interfaz de seleccion y lanzamiento de los reportes.
+        ============================================================================
+    -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>S.M.I. CORE | Centro de Reportes</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('smi-theme') || 'dark');</script>
+    <link href="theme.css" rel="stylesheet">
+    
+    <style>
+        /*
+         * =========================================================================
+         * VARIABLES GLOBALES DE ESTILO
+         * =========================================================================
+         * La paleta principal se centraliza mediante variables CSS para facilitar
+         * el mantenimiento y conservar una apariencia coherente.
+         */
+        :root {
+            --bg-main: #0d1117;
+            --panel-bg: #161b22;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --border: #30363d;
+            --text-main: #e6edf3;
+            --text-dim: #7d8590;
+        }
+
+        /*
+         * =========================================================================
+         * CONFIGURACION GENERAL DE LA PAGINA
+         * =========================================================================
+         * La vista utiliza una distribucion horizontal formada por un menu lateral
+         * fijo y una zona principal desplazable.
+         */
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            margin: 0;
+            padding: 0;
+            letter-spacing: -0.01em;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+        *, *::before, *::after { box-sizing: border-box; }
+        .text-muted { color: #9aa4b2 !important; }
+
+        /*
+         * =========================================================================
+         * SIDEBAR MAESTRO UNIFICADO
+         * =========================================================================
+         * El menu lateral mantiene la navegacion comun del sistema.
+         */
+        .sidebar {
+            width: 260px;
+            height: 100vh;
+            background: var(--panel-bg);
+            border-right: 1px solid var(--border);
+            display: flex; flex-direction: column;
+            padding: 30px 20px;
+            position: fixed;
+        }
+
+        .logo-box { margin-bottom: 40px; padding-left: 10px; }
+
+        .nav-list { flex-grow: 1; }
+
+        .nav-item {
+            padding: 10px 14px;
+            color: var(--text-dim);
+            text-decoration: none;
+            display: flex; align-items: center;
+            border-radius: 6px;
+            margin-bottom: 5px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .nav-item:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-main); }
+        .nav-item.active {
+            background: rgba(88, 166, 255, 0.1);
+            color: var(--accent-blue);
+            border: 1px solid rgba(88, 166, 255, 0.2);
+        }
+
+        .sidebar-divider { height: 1px; background: var(--border); margin: 15px 0; }
+        .sidebar-label { 
+            color: var(--text-dim); font-size: 9px; text-transform: uppercase; 
+            letter-spacing: 1px; padding-left: 14px; margin-bottom: 10px; display: block; 
+        }
+
+        /*
+         * =========================================================================
+         * CONTENIDO PRINCIPAL
+         * =========================================================================
+         * El margen izquierdo compensa la anchura del menu lateral fijo.
+         */
+        .main-content {
+            margin-left: 260px;
+            padding: 40px;
+            flex-grow: 1;
+            overflow-y: auto;
+        }
+
+        .section-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--text-main);
+            margin-bottom: 5px;
+        }
+
+        /*
+         * =========================================================================
+         * TARJETAS DE REPORTE
+         * =========================================================================
+         * Cada tarjeta agrupa la descripcion, los filtros y las acciones de un
+         * determinado tipo de informe.
+         */
+        .report-card {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 24px;
+            transition: border-color 0.2s;
+        }
+
+        .report-card:hover {
+            border-color: var(--accent-blue);
+        }
+
+        .report-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 20px;
+        }
+
+        .report-info h6 {
+            font-weight: 700;
+            margin-bottom: 4px;
+            color: var(--text-main);
+        }
+
+        .report-info p {
+            font-size: 13px;
+            color: var(--text-dim);
+            margin: 0;
+        }
+
+        .report-icon {
+            width: 40px;
+            height: 40px;
+            background: #0d1117;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid var(--border);
+            color: var(--accent-blue);
+        }
+
+        /*
+         * =========================================================================
+         * CONTROLES DE REPORTE
+         * =========================================================================
+         * Los controles se distribuyen con Flexbox y pueden saltar de linea cuando
+         * no existe espacio horizontal suficiente.
+         */
+        .report-controls {
+            display: flex;
+            gap: 15px;
+            align-items: flex-end;
+            padding-top: 15px;
+            border-top: 1px solid var(--border);
+            flex-wrap: wrap;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .control-group label {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--text-dim);
+        }
+
+        /*
+         * Los SELECT nativos conservan el valor real de los filtros, aunque se
+         * ocultan porque JavaScript genera una representacion visual personalizada.
+         */
+        .hidden-native-select {
+            display: none;
+        }
+
+        /*
+         * =========================================================================
+         * SELECTOR DE NODOS CON BUSQUEDA
+         * =========================================================================
+         * Permite escribir texto para filtrar la lista de nodos disponibles.
+         */
+        .search-select {
+            position: relative;
+            min-width: 220px;
+        }
+
+        .search-select-input {
+            width: 100%;
+            min-height: 40px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: #0d1117;
+            color: var(--text-main);
+            padding: 0 38px 0 12px;
+            font-size: 13px;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .search-select::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            right: 14px;
+            width: 9px;
+            height: 9px;
+            border-right: 2px solid #a7b7ca;
+            border-bottom: 2px solid #a7b7ca;
+            transform: translateY(-65%) rotate(45deg);
+            pointer-events: none;
+            transition: transform 0.2s ease;
+        }
+
+        .search-select.open::after {
+            transform: translateY(-35%) rotate(225deg);
+        }
+
+        .search-select-menu {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            right: 0;
+            z-index: 150;
+            display: none;
+            background: #11161d;
+            border: 1px solid #30363d;
+            border-radius: 14px;
+            padding: 8px;
+            box-shadow: 0 18px 36px rgba(0,0,0,0.36);
+            max-height: 260px;
+            overflow-y: auto;
+        }
+
+        .search-select.open .search-select-menu {
+            display: block;
+        }
+
+        .search-select-option {
+            width: 100%;
+            border: none;
+            background: transparent;
+            color: #dce6f2;
+            border-radius: 10px;
+            padding: 11px 12px;
+            text-align: left;
+            font-size: 13px;
+            font-weight: 600;
+            transition: background 0.18s ease, color 0.18s ease;
+        }
+
+        .search-select-option:hover {
+            background: rgba(88, 166, 255, 0.1);
+            color: #ffffff;
+        }
+
+        .search-select-option.active {
+            background: linear-gradient(180deg, rgba(47,129,247,0.96) 0%, rgba(31,111,235,0.96) 100%);
+            color: #ffffff;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+        }
+
+        .search-select-empty {
+            padding: 10px 12px;
+            color: var(--text-dim);
+            font-size: 12px;
+        }
+
+        /*
+         * =========================================================================
+         * SELECTOR PERSONALIZADO DE OPCIONES
+         * =========================================================================
+         * Se utiliza para listas cortas y cerradas, como el periodo de alertas.
+         */
+        .option-select {
+            position: relative;
+            min-width: 158px;
+        }
+
+        .option-select-button {
+            width: 100%;
+            min-height: 40px;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: #0d1117;
+            color: var(--text-main);
+            padding: 0 38px 0 14px;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: 'Inter', sans-serif;
+            text-align: left;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+        }
+
+        .option-select-button:hover {
+            border-color: #4b5563;
+        }
+
+        .option-select-button:focus {
+            outline: none;
+            border-color: rgba(88, 166, 255, 0.55);
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.12);
+        }
+
+        .option-select::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            right: 14px;
+            width: 9px;
+            height: 9px;
+            border-right: 2px solid #a7b7ca;
+            border-bottom: 2px solid #a7b7ca;
+            transform: translateY(-65%) rotate(45deg);
+            pointer-events: none;
+            transition: transform 0.2s ease;
+        }
+
+        .option-select.open::after {
+            transform: translateY(-35%) rotate(225deg);
+        }
+
+        .option-select-menu {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            right: 0;
+            z-index: 150;
+            display: none;
+            background: #11161d;
+            border: 1px solid #30363d;
+            border-radius: 14px;
+            padding: 8px;
+            box-shadow: 0 18px 36px rgba(0,0,0,0.36);
+        }
+
+        .option-select.open .option-select-menu {
+            display: block;
+        }
+
+        .option-select-item {
+            width: 100%;
+            border: none;
+            background: transparent;
+            color: #dce6f2;
+            border-radius: 10px;
+            padding: 11px 12px;
+            text-align: left;
+            font-size: 13px;
+            font-weight: 600;
+            transition: background 0.18s ease, color 0.18s ease;
+        }
+
+        .option-select-item:hover {
+            background: rgba(88, 166, 255, 0.1);
+            color: #ffffff;
+        }
+
+        .option-select-item.active {
+            background: linear-gradient(180deg, rgba(47,129,247,0.96) 0%, rgba(31,111,235,0.96) 100%);
+            color: #ffffff;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+        }
+
+        :root[data-theme="light"] .search-select-input {
+            background: #ffffff;
+            color: #0f172a;
+            border-color: #c9d4e5;
+        }
+
+        :root[data-theme="light"] .search-select-menu {
+            background: #ffffff;
+            border-color: #d5e1ee;
+            box-shadow: 0 16px 30px rgba(20,33,51,0.14);
+        }
+
+        :root[data-theme="light"] .search-select-option {
+            color: #142133;
+        }
+
+        :root[data-theme="light"] .search-select-option:hover {
+            background: rgba(31,102,209,0.08);
+            color: #142133;
+        }
+
+        :root[data-theme="light"] .option-select-button {
+            background: #ffffff;
+            color: #0f172a;
+            border-color: #c9d4e5;
+        }
+
+        :root[data-theme="light"] .option-select-menu {
+            background: #ffffff;
+            border-color: #d5e1ee;
+            box-shadow: 0 16px 30px rgba(20,33,51,0.14);
+        }
+
+        :root[data-theme="light"] .option-select-item {
+            color: #142133;
+        }
+
+        :root[data-theme="light"] .option-select-item:hover {
+            background: rgba(31,102,209,0.08);
+            color: #142133;
+        }
+
+        .select-shell {
+            position: relative;
+            min-width: 158px;
+        }
+
+        .select-shell::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            right: 14px;
+            width: 9px;
+            height: 9px;
+            border-right: 2px solid #b7c5d8;
+            border-bottom: 2px solid #b7c5d8;
+            transform: translateY(-65%) rotate(45deg);
+            pointer-events: none;
+            transition: border-color 0.2s ease;
+        }
+
+        .select-shell .input-custom {
+            width: 100%;
+            padding: 0 40px 0 14px;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.015) 100%), #0d1117;
+            font-size: 13px;
+            font-weight: 600;
+            color: #e6edf3;
+            border-radius: 14px;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+            cursor: pointer;
+        }
+
+        .select-shell .input-custom:hover {
+            border-color: #4b5563;
+        }
+
+        .select-shell .input-custom:focus {
+            outline: none;
+            border-color: rgba(88, 166, 255, 0.65);
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.12);
+        }
+
+        .select-shell .input-custom option {
+            background: #11161d;
+            color: #e6edf3;
+            font-weight: 600;
+        }
+
+        :root[data-theme="light"] .select-shell::after {
+            border-right-color: #60748c;
+            border-bottom-color: #60748c;
+        }
+
+        :root[data-theme="light"] .select-shell .input-custom {
+            background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(245,248,252,0.98) 100%), #ffffff;
+            color: #142133;
+            border-color: #c9d4e5;
+        }
+
+        :root[data-theme="light"] .select-shell .input-custom:hover {
+            border-color: #aebfd4;
+        }
+
+        :root[data-theme="light"] .select-shell .input-custom option {
+            background: #ffffff;
+            color: #142133;
+        }
+
+        .input-custom,
+        .flatpickr-input {
+            background: #0d1117;
+            border: 1px solid var(--border);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-family: 'Inter', sans-serif;
+            color-scheme: dark;
+            min-height: 40px;
+        }
+
+        /*
+         * =========================================================================
+         * CAMPOS DE FECHA
+         * =========================================================================
+         * Este contenedor permite incorporar un icono visual sobre los INPUT
+         * gestionados por Flatpickr.
+         */
+        .date-shell {
+            position: relative;
+            min-width: 190px;
+        }
+
+        .date-shell::before {
+            content: "";
+            position: absolute;
+            top: 50%;
+            right: 14px;
+            transform: translateY(-50%);
+            width: 16px;
+            height: 16px;
+            border: 1.8px solid #c8d2de;
+            border-radius: 4px;
+            box-shadow: inset 0 -2px 0 rgba(200, 210, 222, 0.35);
+            pointer-events: none;
+        }
+
+        .date-shell::after {
+            content: "";
+            position: absolute;
+            top: calc(50% - 5px);
+            right: 18px;
+            width: 8px;
+            height: 2px;
+            background: #c8d2de;
+            border-radius: 999px;
+            pointer-events: none;
+            box-shadow:
+                0 -4px 0 0 #c8d2de,
+                -4px -4px 0 -1px #c8d2de,
+                4px -4px 0 -1px #c8d2de;
+        }
+
+        .flatpickr-input {
+            width: 100%;
+            padding: 0 42px 0 12px;
+            font-family: 'JetBrains Mono', monospace;
+            background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.015) 100%), #0d1117;
+        }
+
+        .flatpickr-input:hover {
+            border-color: #4b5563;
+        }
+
+        .flatpickr-input:focus {
+            outline: none;
+            border-color: rgba(88, 166, 255, 0.55);
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.12);
+        }
+
+        /*
+         * =========================================================================
+         * PERSONALIZACION DE FLATPICKR - TEMA OSCURO
+         * =========================================================================
+         * Se adapta el aspecto de la libreria externa a la identidad visual.
+         */
+        .flatpickr-calendar {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 14px;
+            box-shadow: 0 18px 36px rgba(0,0,0,0.36);
+            overflow: hidden;
+        }
+
+        .flatpickr-months {
+            background: #161b22;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            padding: 8px 8px 6px;
+        }
+
+        .flatpickr-current-month,
+        .flatpickr-current-month .flatpickr-monthDropdown-months,
+        .flatpickr-current-month input.cur-year,
+        .flatpickr-weekdays,
+        span.flatpickr-weekday,
+        .flatpickr-day,
+        .flatpickr-time input,
+        .flatpickr-time .flatpickr-time-separator {
+            color: #e6edf3;
+        }
+
+        .flatpickr-current-month .flatpickr-monthDropdown-months,
+        .flatpickr-current-month input.cur-year {
+            font-weight: 700;
+        }
+
+        .flatpickr-weekdays {
+            background: transparent;
+        }
+
+        span.flatpickr-weekday {
+            font-size: 12px;
+            font-weight: 700;
+            opacity: 0.95;
+        }
+
+        .flatpickr-days { padding: 2px 0 8px; }
+
+        .flatpickr-day {
+            border-radius: 999px;
+            max-width: 36px;
+            height: 36px;
+            line-height: 36px;
+            font-weight: 600;
+        }
+
+        .flatpickr-day.flatpickr-disabled,
+        .flatpickr-day.prevMonthDay,
+        .flatpickr-day.nextMonthDay {
+            color: #6b7280;
+        }
+
+        .flatpickr-day.today {
+            border: 1px solid rgba(88, 166, 255, 0.55);
+            color: #e6edf3;
+        }
+
+        .flatpickr-day.selected,
+        .flatpickr-day.startRange,
+        .flatpickr-day.endRange,
+        .flatpickr-day.selected:hover,
+        .flatpickr-day.startRange:hover,
+        .flatpickr-day.endRange:hover {
+            background: linear-gradient(180deg, rgba(47,129,247,0.96) 0%, rgba(31,111,235,0.96) 100%);
+            border-color: transparent;
+            color: #fff;
+        }
+
+        .flatpickr-day:hover,
+        .flatpickr-day.today:hover {
+            background: rgba(88, 166, 255, 0.16);
+            border-color: transparent;
+        }
+
+        .flatpickr-months .flatpickr-prev-month,
+        .flatpickr-months .flatpickr-next-month {
+            fill: #dce6f2;
+        }
+
+        .flatpickr-months .flatpickr-prev-month svg,
+        .flatpickr-months .flatpickr-next-month svg {
+            width: 15px;
+            height: 15px;
+        }
+
+        .flatpickr-months .flatpickr-prev-month:hover svg,
+        .flatpickr-months .flatpickr-next-month:hover svg {
+            fill: #58a6ff;
+        }
+
+        /*
+         * =========================================================================
+         * PERSONALIZACION DE FLATPICKR - TEMA CLARO
+         * =========================================================================
+         */
+        :root[data-theme="light"] .flatpickr-input {
+            background: #ffffff;
+            color: #0f172a;
+            border-color: #c9d4e5;
+        }
+
+        :root[data-theme="light"] .date-shell::before {
+            border-color: #6b7f97;
+            box-shadow: inset 0 -2px 0 rgba(107, 127, 151, 0.2);
+        }
+
+        :root[data-theme="light"] .date-shell::after {
+            background: #6b7f97;
+            box-shadow:
+                0 -4px 0 0 #6b7f97,
+                -4px -4px 0 -1px #6b7f97,
+                4px -4px 0 -1px #6b7f97;
+        }
+
+        :root[data-theme="light"] .flatpickr-calendar {
+            background: #ffffff;
+            border-color: #c9d4e5;
+            box-shadow: 0 18px 36px rgba(15, 23, 42, 0.14);
+        }
+
+        :root[data-theme="light"] .flatpickr-months {
+            background: #ffffff;
+            border-bottom-color: #e2e8f0;
+        }
+
+        :root[data-theme="light"] .flatpickr-current-month,
+        :root[data-theme="light"] .flatpickr-current-month .flatpickr-monthDropdown-months,
+        :root[data-theme="light"] .flatpickr-current-month input.cur-year,
+        :root[data-theme="light"] .flatpickr-weekdays,
+        :root[data-theme="light"] span.flatpickr-weekday,
+        :root[data-theme="light"] .flatpickr-day,
+        :root[data-theme="light"] .flatpickr-time input,
+        :root[data-theme="light"] .flatpickr-time .flatpickr-time-separator {
+            color: #0f172a;
+        }
+
+        :root[data-theme="light"] .flatpickr-day.flatpickr-disabled,
+        :root[data-theme="light"] .flatpickr-day.prevMonthDay,
+        :root[data-theme="light"] .flatpickr-day.nextMonthDay {
+            color: #94a3b8;
+        }
+
+        /*
+         * =========================================================================
+         * BOTONES DE DESCARGA
+         * =========================================================================
+         * Las acciones principales se destacan con el color de acento del sistema.
+         */
+        .btn-download {
+            background: var(--accent-blue);
+            color: #0d1117;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 12px;
+            transition: 0.2s;
+        }
+
+        .btn-download:hover { opacity: 0.9; }
+
+        .btn-secondary-custom {
+            background: #21262d;
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 12px;
+        }
+
+        /*
+         * =========================================================================
+         * DISENO RESPONSIVE PARA TABLETS
+         * =========================================================================
+         * El menu pasa a la parte superior y los controles utilizan mas anchura.
+         */
+        @media (max-width: 980px) {
+            body { display: block; height: auto; overflow: auto; }
+            .sidebar {
+                position: static;
+                width: 100%;
+                max-width: 100%;
+                height: auto;
+                padding: 18px;
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+            }
+            .logo-box { margin-bottom: 18px; padding-left: 0; }
+            .nav-list, .sidebar-footer {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 8px;
+            }
+            .nav-item { margin-bottom: 0; min-height: 42px; }
+            .main-content { margin-left: 0; padding: 24px; }
+            .report-header { gap: 14px; }
+            .report-controls { align-items: stretch; }
+            .control-group { flex: 1 1 180px; }
+            .input-custom { min-height: 38px; width: 100%; }
+        }
+
+        /*
+         * =========================================================================
+         * DISENO RESPONSIVE PARA MOVILES
+         * =========================================================================
+         * Los controles y botones pasan a ocupar una linea completa.
+         */
+        @media (max-width: 560px) {
+            .main-content { padding: 18px 14px; }
+            .sidebar { position: sticky; top: 0; z-index: 1000; padding: 12px; }
+            .logo-box { margin-bottom: 10px; }
+            .nav-list, .sidebar-footer {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
+                overflow-x: hidden;
+                gap: 8px;
+                padding-bottom: 4px;
+                scrollbar-width: none;
+            }
+            .nav-list::-webkit-scrollbar, .sidebar-footer::-webkit-scrollbar { display: none; }
+            .sidebar-footer { margin-top: 8px; }
+            .sidebar-footer > div, .sidebar-label { display: none; }
+            .nav-item { min-width: 0; min-height: 36px; white-space: normal; overflow-wrap: anywhere; justify-content: center; text-align: center; padding: 8px 12px; font-size: 13px; }
+            .report-card { padding: 18px; }
+            .report-header { align-items: flex-start; }
+            .report-icon { width: 36px; height: 36px; flex-shrink: 0; }
+            .control-group, .btn-download, .btn-secondary-custom { width: 100%; flex-basis: 100%; }
+        }
+    </style>
+</head>
+<body>
+
+<!--
+    ============================================================================
+    NAVEGACION PRINCIPAL
+    ============================================================================
+    La barra lateral permite desplazarse entre los diferentes modulos del sistema.
+    La opcion Reportes aparece marcada como activa.
+-->
+<nav class="sidebar">
+    <div class="logo-box">
+        <h5 class="text-white fw-bold mb-0">S.M.I. <span style="color:var(--accent-blue)">CORE</span></h5>
+        <small class="text-muted" style="font-size: 10px; font-family: 'JetBrains Mono';">VER. 2.6.0-STABLE</small>
+    </div>
+    
+        <div class="nav-list">
+        <a href="index.html" class="nav-item">Dashboard Vivo</a>
+        <a href="mapa.html" class="nav-item">Mapa de Planta</a>
+        <a href="mantenimiento.html" class="nav-item">Analisis por Zonas</a>
+        <a href="historial.html" class="nav-item">Historial de Datos</a>
+        <a href="reportes.html" class="nav-item active">Reportes</a>
+    </div>
+    <div class="sidebar-footer">
+        <div class="sidebar-divider"></div>
+        <small class="sidebar-label">Administracion</small>
+        <a href="configurar-sistema.html" class="nav-item">Configurar Sistema</a>
+        <a href="historial-configuracion.html" class="nav-item">Registro Config.</a>
+    </div>
+</nav>
+
+<!--
+    ============================================================================
+    CONTENIDO PRINCIPAL DEL CENTRO DE REPORTES
+    ============================================================================
+-->
+<main class="main-content">
+
+    <!-- Encabezado descriptivo de la vista. -->
+    <div class="mb-5">
+        <h4 class="section-title">Centro de Reportes</h4>
+        <p class="text-muted small m-0">Exportacion de telemetria, alertas y trazabilidad del sistema.</p>
+    </div>
+
+    <div class="row">
+        <div class="col-12 col-xl-6">
+            <!--
+                INFORME DE TELEMETRIA DETALLADO
+                Permite seleccionar un rango temporal y un nodo, y descargar el
+                resultado en PDF o CSV.
+            -->
+            <div class="report-card">
+                <div class="report-header">
+                    <div class="report-info">
+                        <h6>Informe de Telemetría Detallado</h6>
+                        <p>Exporta todas las lecturas de sensores (Temp, Hum, Pres) en un rango de fechas.</p>
+                    </div>
+                    <div class="report-icon">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M4 11a1 1 0 1 1 2 0v1a1 1 0 1 1-2 0v-1zm6-4a1 1 0 1 1 2 0v5a1 1 0 1 1-2 0V7zM7 9a1 1 0 1 1 2 0v3a1 1 0 1 1-2 0V9z"/><path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1v-1z"/><path d="M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5h3z"/></svg>
+                    </div>
+                </div>
+                <div class="report-controls">
+                    <div class="control-group">
+                        <label>Desde</label>
+                        <div class="date-shell">
+                            <input type="text" class="flatpickr-input" id="telemetryStart" placeholder="Selecciona fecha">
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label>Hasta</label>
+                        <div class="date-shell">
+                            <input type="text" class="flatpickr-input" id="telemetryEnd" placeholder="Selecciona fecha">
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label>Nodo</label>
+                        <!--
+                            Este SELECT conserva el valor real del nodo seleccionado.
+                            El componente search-select situado a continuacion actua
+                            como interfaz visible y permite buscar nodos por texto.
+                        -->
+                        <select class="hidden-native-select" id="telemetryNode">
+                            <option value="">Todos los nodos</option>
+                        </select>
+                        <div class="search-select" data-select-id="telemetryNode" data-placeholder="Buscar nodo..."></div>
+                    </div>
+                    <button class="btn-download" onclick="downloadTelemetry('pdf')">Generar PDF</button>
+                    <button class="btn-secondary-custom" onclick="downloadTelemetry('csv')">CSV</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-xl-6">
+            <!--
+                RESUMEN CRITICO DE ALERTAS
+                Permite seleccionar un periodo predefinido y filtrar por nodo.
+            -->
+            <div class="report-card">
+                <div class="report-header">
+                    <div class="report-info">
+                        <h6>Resumen Crítico de Alertas</h6>
+                        <p>Informe de incidencias, sobrecalentamientos y fallos de conexión por nodo.</p>
+                    </div>
+                    <div class="report-icon">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M8 16a2 2 0 0 0 2-2H6a2 2 0 0 0 2 2zM8 1.918l-.797.161A4.002 4.002 0 0 0 4 6c0 .628-.134 2.197-.459 3.742-.16.767-.376 1.566-.663 2.258h10.244c-.287-.692-.502-1.49-.663-2.258C12.134 8.197 12 6.628 12 6a4.002 4.002 0 0 0-3.203-3.92L8 1.917zM14.22 12c.223.447.481.801.78 1H1c.299-.199.557-.553.78-1C2.68 10.2 3 6.88 3 6c0-2.42 1.72-4.44 4.005-4.901a1 1 0 1 1 1.99 0A5.002 5.002 0 0 1 13 6c0 .88.32 4.2 1.22 6z"/></svg>
+                    </div>
+                </div>
+                <div class="report-controls">
+                    <div class="control-group">
+                        <label>Periodo</label>
+                        <!--
+                            El SELECT nativo mantiene la seleccion real del periodo.
+                            JavaScript genera sobre el un desplegable personalizado.
+                        -->
+                        <select class="hidden-native-select" id="alertsPeriod">
+                                <option>Últimas 24h</option>
+                                <option>Última Semana</option>
+                                <option>Mes Actual</option>
+                            </select>
+                        <div class="option-select" data-select-id="alertsPeriod"></div>
+                    </div>
+                    <div class="control-group">
+                        <label>Nodo</label>
+                        <select class="hidden-native-select" id="alertsNode">
+                            <option value="">Todos los nodos</option>
+                        </select>
+                        <div class="search-select" data-select-id="alertsNode" data-placeholder="Buscar nodo..."></div>
+                    </div>
+                    <button class="btn-download" onclick="downloadAlerts('pdf')">Descargar PDF</button>
+                    <button class="btn-secondary-custom" onclick="downloadAlerts('csv')">CSV</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-xl-6">
+            <!--
+                REGISTRO DE CONFIGURACION
+                Permite exportar el historial completo o filtrado por nodo en Excel.
+            -->
+            <div class="report-card">
+                <div class="report-header">
+                    <div class="report-info">
+                        <h6>Registro de Configuracion</h6>
+                        <p>Trazabilidad completa de quién cambió umbrales y cuándo se aplicaron cambios.</p>
+                    </div>
+                    <div class="report-icon" style="color: var(--accent-green);">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M11 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/><path fill-rule="evenodd" d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8zm8-7a7 7 0 0 0-5.468 11.37C3.242 11.226 4.805 10 8 10s4.757 1.225 5.468 2.37A7 7 0 0 0 8 1z"/></svg>
+                    </div>
+                </div>
+                <div class="report-controls">
+                    <div class="control-group">
+                        <label>Nodo</label>
+                        <select class="hidden-native-select" id="historyNode">
+                            <option value="">Todos los nodos</option>
+                        </select>
+                        <div class="search-select" data-select-id="historyNode" data-placeholder="Buscar nodo..."></div>
+                    </div>
+                    <button class="btn-download" style="background: var(--accent-green);" onclick="downloadHistoryExcel()">Exportar Historial (Excel)</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<!-- Libreria principal utilizada para los selectores de fecha. -->
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+
+<!-- Localizacion espanola utilizada por Flatpickr. -->
+<script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/es.js"></script>
+<script>
+    /*
+     * ============================================================================
+     * LOGICA DEL CENTRO DE REPORTES
+     * ============================================================================
+     *
+     * Este bloque JavaScript se encarga de:
+     * - Construir las URL utilizadas para generar los informes.
+     * - Incorporar filtros como parametros de consulta.
+     * - Iniciar las descargas mediante enlaces temporales.
+     * - Validar el rango de fechas del informe de telemetria.
+     * - Inicializar los calendarios Flatpickr.
+     * - Generar selectores personalizados con busqueda.
+     * - Generar selectores personalizados para opciones cerradas.
+     * - Solicitar al backend la lista de nodos activos.
+     * - Lanzar las descargas de telemetria, alertas e historial.
+     * ============================================================================
+     */
+
+
+    /*
+     * URL BASE DE LA API
+     * -------------------------------------------------------------------------
+     *
+     * Cuando la pagina se ejecuta mediante HTTP o HTTPS se utiliza el mismo origen
+     * desde el que se ha cargado la aplicacion.
+     *
+     * Si el archivo se abre directamente desde el sistema de archivos, se utiliza
+     * localhost:5000 como direccion de desarrollo.
+     */
+    const API_BASE = window.location.protocol.startsWith('http')
+        ? window.location.origin
+        : 'http://localhost:5000';
+
+
+    /**
+     * Construye una URL absoluta incorporando parametros de consulta.
+     *
+     * La funcion se reutiliza para todos los reportes y evita repetir la logica
+     * necesaria para crear query strings en cada tipo de descarga.
+     *
+     * Los parametros cuyo valor se encuentre vacio no se incorporan a la URL.
+     *
+     * @param {string} path Ruta relativa del endpoint que genera el informe.
+     * @param {Object} params Objeto con los filtros que deben enviarse.
+     * @returns {string} URL absoluta preparada para la descarga.
+     */
+    function buildUrl(path, params = {}) {
+        /*
+         * El constructor URL resuelve la ruta relativa utilizando API_BASE como
+         * origen.
+         */
+        const url = new URL(path, API_BASE);
+
+        /*
+         * Object.entries() convierte el objeto de parametros en pares [clave, valor]
+         * que pueden recorrerse mediante forEach().
+         */
+        Object.entries(params).forEach(([key, value]) => {
+            /*
+             * Solamente se incorporan valores no vacios. De esta manera, por
+             * ejemplo, seleccionar "Todos los nodos" no genera node_id=.
+             */
+            if (value) {
+                url.searchParams.set(key, value);
+            }
+        });
+
+        /* La instancia URL se convierte finalmente en una cadena de texto. */
+        return url.toString();
+    }
+
+
+    /**
+     * Inicia la descarga de un informe creando un enlace temporal.
+     *
+     * El enlace apunta directamente al endpoint del backend encargado de generar
+     * el fichero. Despues de activarse programaticamente se elimina del documento.
+     *
+     * @param {string} path Ruta relativa del endpoint de descarga.
+     * @param {Object} params Filtros que deben incorporarse a la URL.
+     * @returns {void}
+     */
+    function startDownload(path, params = {}) {
+        /* Se crea un elemento <a> exclusivamente para lanzar la descarga. */
+        const link = document.createElement('a');
+
+        /* La direccion final se construye utilizando buildUrl(). */
+        link.href = buildUrl(path, params);
+
+        /*
+         * El enlace se incorpora temporalmente al DOM para asegurar que el
+         * navegador puede ejecutar correctamente el evento click().
+         */
+        document.body.appendChild(link);
+
+        /* Se simula la pulsacion sobre el enlace. */
+        link.click();
+
+        /* Una vez iniciada la descarga, el elemento deja de ser necesario. */
+        document.body.removeChild(link);
+    }
+
+
+    /**
+     * Recupera y valida los filtros del informe de telemetria.
+     *
+     * Se obtienen la fecha inicial, la fecha final y el nodo seleccionado.
+     * Cuando ambas fechas existen, se comprueba que el inicio no sea posterior al
+     * final.
+     *
+     * @returns {Object|null} Objeto con start, end y node_id, o null si no es valido.
+     */
+    function telemetryDates() {
+        /* Fecha inicial seleccionada en el primer calendario. */
+        const start =
+            document.getElementById('telemetryStart').value;
+
+        /* Fecha final seleccionada en el segundo calendario. */
+        const end =
+            document.getElementById('telemetryEnd').value;
+
+        /*
+         * Una cadena vacia representa la opcion "Todos los nodos".
+         */
+        const node_id =
+            document.getElementById('telemetryNode').value;
+
+        /*
+         * Flatpickr almacena las fechas con formato YYYY-MM-DD.
+         * Este formato permite compararlas directamente como cadenas porque el
+         * orden lexicografico coincide con el orden cronologico.
+         */
+        if (start && end && start > end) {
+            alert(
+                'La fecha "Desde" no puede ser posterior a "Hasta".'
+            );
+            return null;
+        }
+
+        /*
+         * Los nombres de las propiedades coinciden con los parametros esperados por
+         * el endpoint de telemetria.
+         */
+        return {
+            start,
+            end,
+            node_id
+        };
+    }
+
+
+    /**
+     * Ajusta las filas visibles de los calendarios Flatpickr.
+     *
+     * Algunos meses pueden generar una fila completa formada exclusivamente por
+     * dias del mes anterior o siguiente. La funcion agrupa los dias en semanas y
+     * oculta aquellas filas que no contienen ningun dia del mes actual.
+     *
+     * La firma de esta funcion coincide con la utilizada por los callbacks de
+     * Flatpickr.
+     *
+     * @param {Array<Date>} selectedDates Fechas seleccionadas.
+     * @param {string} dateStr Texto asociado a la fecha seleccionada.
+     * @param {Object} instance Instancia de Flatpickr.
+     * @returns {void}
+     */
+    function ajustarFilasCalendario(
+        selectedDates,
+        dateStr,
+        instance
+    ) {
+        /*
+         * El encadenamiento opcional ?. evita errores cuando alguna parte de la
+         * estructura interna de Flatpickr todavia no existe.
+         */
+        const dayContainer =
+            instance?.calendarContainer?.querySelector(
+                '.flatpickr-days .dayContainer'
+            );
+
+        /* Si no se encuentra el contenedor de dias, no se realiza ningun ajuste. */
+        if (!dayContainer) {
+            return;
+        }
+
+        /* Cada posicion de rows representara una semana completa. */
+        const rows = [];
+
+        /*
+         * Array.from() convierte la NodeList de dias en un array convencional.
+         */
+        const days = Array.from(
+            dayContainer.querySelectorAll('.flatpickr-day')
+        );
+
+        /*
+         * Los dias se agrupan en bloques de siete elementos.
+         */
+        for (
+            let index = 0;
+            index < days.length;
+            index += 7
+        ) {
+            rows.push(
+                days.slice(index, index + 7)
+            );
+        }
+
+        /*
+         * Cada semana se analiza de forma independiente.
+         */
+        rows.forEach((row, rowIndex) => {
+            if (!row.length) {
+                return;
+            }
+
+            /*
+             * some() devuelve true cuando al menos un dia pertenece al mes actual.
+             * Los dias externos reciben las clases prevMonthDay o nextMonthDay.
+             */
+            const hasCurrentMonthDay = row.some(
+                day =>
+                    !day.classList.contains('prevMonthDay')
+                    && !day.classList.contains('nextMonthDay')
+            );
+
+            /*
+             * Las semanas formadas solamente por dias externos quedan ocultas.
+             */
+            row.forEach(day => {
+                day.style.display =
+                    hasCurrentMonthDay ? '' : 'none';
+            });
+        });
+    }
+
+
+    /**
+     * Inicializa los calendarios del informe de telemetria.
+     *
+     * Ambos calendarios comparten formato de almacenamiento y representacion:
+     * - El valor real utiliza YYYY-MM-DD.
+     * - El valor visible utiliza DD/MM/YYYY.
+     *
+     * @returns {void}
+     */
+    function initCalendars() {
+        /*
+         * Se configura globalmente la localizacion espanola cargada previamente.
+         */
+        flatpickr.localize(flatpickr.l10ns.es);
+
+        /*
+         * CALENDARIO DE FECHA INICIAL
+         * ---------------------------------------------------------------------
+         *
+         * altInput genera un campo visual alternativo para mostrar una fecha mas
+         * legible sin modificar el valor real utilizado en las consultas.
+         */
+        flatpickr(
+            '#telemetryStart',
+            {
+                dateFormat: 'Y-m-d',
+                altInput: true,
+                altInputClass: 'flatpickr-input',
+                altFormat: 'd/m/Y',
+                allowInput: false,
+
+                /*
+                 * La misma funcion de ajuste se ejecuta al crear, abrir o cambiar
+                 * de mes en el calendario.
+                 */
+                onReady: [ajustarFilasCalendario],
+                onMonthChange: [ajustarFilasCalendario],
+                onOpen: [ajustarFilasCalendario]
+            }
+        );
+
+        /*
+         * CALENDARIO DE FECHA FINAL
+         * ---------------------------------------------------------------------
+         * Mantiene la misma configuracion que la fecha inicial.
+         */
+        flatpickr(
+            '#telemetryEnd',
+            {
+                dateFormat: 'Y-m-d',
+                altInput: true,
+                altInputClass: 'flatpickr-input',
+                altFormat: 'd/m/Y',
+                allowInput: false,
+                onReady: [ajustarFilasCalendario],
+                onMonthChange: [ajustarFilasCalendario],
+                onOpen: [ajustarFilasCalendario]
+            }
+        );
+    }
+
+
+    /**
+     * Convierte un SELECT nativo de nodos en un selector visual con busqueda.
+     *
+     * El SELECT original permanece oculto y conserva el valor real. El componente
+     * visible se compone de un INPUT y un menu generado dinamicamente.
+     *
+     * Al escribir texto se filtran las opciones cuyo nombre contiene la cadena
+     * introducida.
+     *
+     * @param {HTMLElement} wrapper Contenedor sobre el que se crea el componente.
+     * @returns {void}
+     */
+    function initSearchSelect(wrapper) {
+        /*
+         * data-select-id indica el identificador del SELECT nativo asociado.
+         */
+        const selectId =
+            wrapper.dataset.selectId;
+
+        /*
+         * data-placeholder permite personalizar el texto del campo de busqueda.
+         */
+        const placeholder =
+            wrapper.dataset.placeholder || 'Seleccionar';
+
+        /* Se obtiene el SELECT que almacenara el valor real. */
+        const nativeSelect =
+            document.getElementById(selectId);
+
+        /*
+         * Se construyen los elementos visibles del componente.
+         */
+        wrapper.innerHTML = `
+            <input
+                type="text"
+                class="search-select-input"
+                autocomplete="off"
+                placeholder="${placeholder}">
+            <div class="search-select-menu"></div>
+        `;
+
+        /* Referencia al campo de busqueda. */
+        const input =
+            wrapper.querySelector('.search-select-input');
+
+        /* Referencia al contenedor de opciones. */
+        const menu =
+            wrapper.querySelector('.search-select-menu');
+
+        /*
+         * Se comprueba si el SELECT incluye una opcion con value="".
+         * En estos filtros dicha opcion representa "Todos los nodos".
+         */
+        const hasEmptyOption =
+            Array.from(nativeSelect.options)
+                .some(option => option.value === '');
+
+
+        /**
+         * Sincroniza el texto visible con la opcion seleccionada internamente.
+         *
+         * @returns {void}
+         */
+        function syncInput() {
+            /*
+             * selectedIndex permite obtener el OPTION actualmente seleccionado.
+             */
+            const selected =
+                nativeSelect.options[nativeSelect.selectedIndex];
+
+            /*
+             * Cuando la opcion seleccionada es la opcion vacia, el buscador se
+             * mantiene sin texto para representar "Todos los nodos".
+             */
+            input.value =
+                selected && selected.value !== ''
+                    ? selected.text
+                    : '';
+        }
+
+
+        /**
+         * Genera las opciones visibles que coinciden con el texto de busqueda.
+         *
+         * @param {string} filter Texto utilizado para filtrar los nodos.
+         * @returns {void}
+         */
+        function renderOptions(filter = '') {
+            /*
+             * Se eliminan espacios externos y se normaliza el texto a minusculas
+             * para realizar una busqueda sin distinguir mayusculas.
+             */
+            const normalized =
+                filter.trim().toLowerCase();
+
+            /*
+             * La opcion vacia se excluye del menu de resultados.
+             * filter() conserva solamente las opciones cuyo texto contiene la
+             * cadena introducida por el usuario.
+             */
+            const options =
+                Array.from(nativeSelect.options)
+                    .filter(
+                        option =>
+                            option.value !== ''
+                            && option.text
+                                .toLowerCase()
+                                .includes(normalized)
+                    );
+
+            /*
+             * Si no existe ninguna coincidencia se muestra un mensaje informativo.
+             */
+            if (!options.length) {
+                menu.innerHTML =
+                    '<div class="search-select-empty">No hay coincidencias</div>';
+                return;
+            }
+
+            /*
+             * Cada OPTION se convierte en un boton visible.
+             * La opcion cuyo valor coincide con el SELECT actual recibe "active".
+             */
+            menu.innerHTML =
+                options.map(option => `
+                    <button
+                        type="button"
+                        class="search-select-option ${option.value === nativeSelect.value ? 'active' : ''}"
+                        data-value="${option.value}">
+                        ${option.text}
+                    </button>
+                `).join('');
+
+            /*
+             * Como los botones se acaban de generar mediante innerHTML, sus eventos
+             * deben registrarse despues de cada renderizado.
+             */
+            menu
+                .querySelectorAll('.search-select-option')
+                .forEach(button => {
+                    button.addEventListener('click', () => {
+                        /*
+                         * dataset.value recupera el atributo data-value asociado al
+                         * boton pulsado.
+                         */
+                        nativeSelect.value =
+                            button.dataset.value;
+
+                        /*
+                         * El INPUT adopta el texto visible de la opcion seleccionada.
+                         */
+                        input.value =
+                            button.textContent.trim();
+
+                        /* Tras seleccionar un nodo, el menu se cierra. */
+                        wrapper.classList.remove('open');
+                    });
+                });
+        }
+
+
+        /*
+         * Al recibir el foco, el menu se abre y muestra las opciones compatibles
+         * con el contenido actual del INPUT.
+         */
+        input.addEventListener('focus', () => {
+            wrapper.classList.add('open');
+            renderOptions(input.value);
+        });
+
+
+        /*
+         * El filtrado se actualiza con cada modificacion del texto introducido.
+         */
+        input.addEventListener('input', () => {
+            /*
+             * Si el campo queda vacio y existe la opcion vacia, el SELECT vuelve a
+             * representar "Todos los nodos".
+             */
+            if (
+                hasEmptyOption
+                && !input.value.trim()
+            ) {
+                nativeSelect.value = '';
+            }
+
+            wrapper.classList.add('open');
+            renderOptions(input.value);
+        });
+
+
+        /*
+         * Al pulsar fuera del componente se cierra el menu.
+         */
+        document.addEventListener('click', event => {
+            if (!wrapper.contains(event.target)) {
+                /*
+                 * Si el buscador queda vacio se restaura la opcion general.
+                 */
+                if (
+                    hasEmptyOption
+                    && !input.value.trim()
+                ) {
+                    nativeSelect.value = '';
+                }
+
+                wrapper.classList.remove('open');
+
+                /*
+                 * El texto se sincroniza de nuevo para evitar conservar contenido
+                 * escrito que no corresponda a una opcion seleccionada.
+                 */
+                syncInput();
+            }
+        });
+
+
+        /*
+         * Se anade al propio contenedor una funcion reutilizable de actualizacion.
+         *
+         * Esta funcion resulta especialmente util despues de que la lista de nodos
+         * se descargue desde el backend y cambien las opciones del SELECT nativo.
+         */
+        wrapper.refreshOptions = () => {
+            syncInput();
+            renderOptions(input.value);
+        };
+
+        /* Se realiza la sincronizacion inicial. */
+        syncInput();
+    }
+
+
+    /**
+     * Inicializa un selector visual para listas cortas de opciones.
+     *
+     * Este componente se utiliza en el periodo del informe de alertas. El SELECT
+     * original permanece oculto y conserva el valor real seleccionado.
+     *
+     * @param {HTMLElement} wrapper Contenedor que se transforma en selector.
+     * @returns {void}
+     */
+    function initOptionSelect(wrapper) {
+        /* Se obtiene el identificador del SELECT asociado. */
+        const selectId =
+            wrapper.dataset.selectId;
+
+        /* Referencia al SELECT nativo. */
+        const nativeSelect =
+            document.getElementById(selectId);
+
+        /*
+         * Si no se encuentra el SELECT asociado, se cancela la inicializacion.
+         */
+        if (!nativeSelect) {
+            return;
+        }
+
+        /*
+         * Se construyen el boton visible y el menu de opciones.
+         */
+        wrapper.innerHTML = `
+            <button
+                type="button"
+                class="option-select-button">
+            </button>
+
+            <div class="option-select-menu"></div>
+        `;
+
+        const button =
+            wrapper.querySelector('.option-select-button');
+
+        const menu =
+            wrapper.querySelector('.option-select-menu');
+
+
+        /**
+         * Sincroniza el texto del boton con la opcion seleccionada.
+         *
+         * @returns {void}
+         */
+        function syncButton() {
+            const selected =
+                nativeSelect.options[nativeSelect.selectedIndex];
+
+            button.textContent =
+                selected
+                    ? selected.text
+                    : 'Seleccionar';
+        }
+
+
+        /**
+         * Genera todas las opciones visibles del menu personalizado.
+         *
+         * @returns {void}
+         */
+        function renderOptions() {
+            /*
+             * Se convierten las opciones nativas en un array convencional.
+             */
+            const options =
+                Array.from(nativeSelect.options);
+
+            /*
+             * La opcion que coincide con selectedIndex se marca visualmente como
+             * activa.
+             */
+            menu.innerHTML =
+                options.map((option, index) => `
+                    <button
+                        type="button"
+                        class="option-select-item ${index === nativeSelect.selectedIndex ? 'active' : ''}"
+                        data-index="${index}">
+                        ${option.text}
+                    </button>
+                `).join('');
+
+            /*
+             * Se registran los eventos de los botones recien generados.
+             */
+            menu
+                .querySelectorAll('.option-select-item')
+                .forEach(item => {
+                    item.addEventListener('click', () => {
+                        /*
+                         * dataset.index se almacena como texto. Number() lo convierte
+                         * a numero antes de asignarlo a selectedIndex.
+                         */
+                        nativeSelect.selectedIndex =
+                            Number(item.dataset.index);
+
+                        /*
+                         * Se dispara manualmente el evento change para mantener el
+                         * comportamiento esperado de un SELECT convencional.
+                         */
+                        nativeSelect.dispatchEvent(
+                            new Event(
+                                'change',
+                                { bubbles: true }
+                            )
+                        );
+
+                        /* Se actualiza la representacion visual. */
+                        syncButton();
+                        renderOptions();
+
+                        /* El menu se cierra tras seleccionar una opcion. */
+                        wrapper.classList.remove('open');
+                    });
+                });
+        }
+
+
+        /*
+         * El boton principal abre o cierra el desplegable.
+         */
+        button.addEventListener('click', event => {
+            /*
+             * stopPropagation() evita que el mismo click llegue al listener global
+             * del documento encargado de cerrar el componente.
+             */
+            event.stopPropagation();
+
+            wrapper.classList.toggle('open');
+
+            /*
+             * Las opciones se regeneran para asegurar que la opcion activa coincide
+             * con el estado real del SELECT.
+             */
+            renderOptions();
+        });
+
+
+        /*
+         * Si el usuario pulsa fuera del componente, este se cierra.
+         */
+        document.addEventListener('click', event => {
+            if (!wrapper.contains(event.target)) {
+                wrapper.classList.remove('open');
+            }
+        });
+
+
+        /*
+         * Se expone una funcion de refresco por si las opciones nativas cambian.
+         */
+        wrapper.refreshOptions = () => {
+            syncButton();
+            renderOptions();
+        };
+
+        /* Se realiza la inicializacion visual. */
+        syncButton();
+        renderOptions();
+    }
+
+
+    /**
+     * Inicia la descarga del informe de telemetria.
+     *
+     * El formato se recibe desde los botones de la interfaz y puede ser "pdf" o
+     * "csv". Antes de iniciar la descarga se validan las fechas.
+     *
+     * @param {string} format Extension/formato solicitado.
+     * @returns {void}
+     */
+    function downloadTelemetry(format) {
+        /*
+         * telemetryDates() devuelve null si el intervalo introducido es incorrecto.
+         */
+        const dates = telemetryDates();
+
+        if (!dates) {
+            return;
+        }
+
+        /*
+         * El formato se incorpora directamente a la extension del endpoint.
+         */
+        startDownload(
+            `/api/reportes/telemetria.${format}`,
+            dates
+        );
+    }
+
+
+    /**
+     * Inicia la descarga del informe de alertas.
+     *
+     * La opcion seleccionada visualmente se convierte a uno de los valores
+     * tecnicos esperados por el backend: 24h, week o month.
+     *
+     * @param {string} format Formato solicitado: pdf o csv.
+     * @returns {void}
+     */
+    function downloadAlerts(format) {
+        /*
+         * Las posiciones del SELECT se corresponden con estos identificadores
+         * tecnicos utilizados por la API.
+         */
+        const periods = [
+            '24h',
+            'week',
+            'month'
+        ];
+
+        const select =
+            document.getElementById('alertsPeriod');
+
+        startDownload(
+            `/api/reportes/alertas.${format}`,
+            {
+                /*
+                 * selectedIndex determina la posicion activa.
+                 * Si no existe una coincidencia valida se utiliza 24h.
+                 */
+                period:
+                    periods[select.selectedIndex] || '24h',
+
+                /*
+                 * Una cadena vacia representa todos los nodos y buildUrl() evitara
+                 * incorporar el parametro en ese caso.
+                 */
+                node_id:
+                    document.getElementById('alertsNode').value
+            }
+        );
+    }
+
+
+    /**
+     * Inicia la descarga del historial en formato Excel.
+     *
+     * El unico filtro disponible es el nodo. Si no se selecciona ninguno, la
+     * descarga se solicita sin node_id.
+     *
+     * @returns {void}
+     */
+    function downloadHistoryExcel() {
+        startDownload(
+            '/api/reportes/historial.xlsx',
+            {
+                node_id:
+                    document.getElementById('historyNode').value
+            }
+        );
+    }
+
+
+    /**
+     * Solicita al backend los nodos disponibles para los filtros de reportes.
+     *
+     * De la respuesta obtenida se conservan unicamente los nodos activos.
+     * Las mismas opciones se introducen posteriormente en los tres SELECT de nodo.
+     *
+     * Tras actualizar los SELECT se refrescan los componentes visuales de busqueda.
+     *
+     * @returns {Promise<void>}
+     */
+    async function cargarNodosReporte() {
+        try {
+            /*
+             * Se solicita la lista general de nodos.
+             */
+            const response =
+                await fetch(`${API_BASE}/api/nodos`);
+
+            /*
+             * La respuesta se convierte de JSON a objetos JavaScript.
+             */
+            const nodos =
+                await response.json();
+
+            /*
+             * La cadena de opciones comienza siempre con "Todos los nodos".
+             *
+             * filter() conserva solamente los nodos activos.
+             * map() transforma cada nodo en un OPTION.
+             * join('') concatena los fragmentos generados.
+             */
+            const options =
+                '<option value="">Todos los nodos</option>'
+                + nodos
+                    .filter(
+                        nodo =>
+                            Number(nodo.activo) === 1
+                    )
+                    .map(
+                        nodo =>
+                            `<option value="${nodo.nodo_id}">${nodo.nodo_id} (${nodo.origen})</option>`
+                    )
+                    .join('');
+
+            /*
+             * Los tres filtros reutilizan exactamente la misma lista.
+             */
+            [
+                'telemetryNode',
+                'alertsNode',
+                'historyNode'
+            ].forEach(id => {
+                document.getElementById(id).innerHTML =
+                    options;
+            });
+
+            /*
+             * Los selectores visuales ya han sido inicializados antes de recibir los
+             * nodos. Por ello se solicita su actualizacion despues de modificar los
+             * SELECT nativos.
+             *
+             * El operador ?. evita errores si un componente no tuviera definida la
+             * funcion refreshOptions.
+             */
+            document
+                .querySelectorAll('.search-select')
+                .forEach(wrapper => {
+                    wrapper.refreshOptions?.();
+                });
+
+        } catch (error) {
+            /*
+             * Un fallo en esta consulta no impide representar la pagina, pero deja
+             * los filtros de nodo sin opciones adicionales.
+             */
+            console.error(
+                'No se pudieron cargar los nodos para reportes',
+                error
+            );
+        }
+    }
+
+
+    /*
+     * ============================================================================
+     * INICIALIZACION GENERAL
+     * ============================================================================
+     *
+     * Todas las operaciones iniciales se ejecutan cuando la pagina ha terminado de
+     * cargarse y los elementos del DOM ya se encuentran disponibles.
+     */
+    window.addEventListener('load', () => {
+
+        /* Se inicializan los calendarios de fecha. */
+        initCalendars();
+
+        /*
+         * Cada contenedor search-select se convierte en un buscador de nodos.
+         */
+        document
+            .querySelectorAll('.search-select')
+            .forEach(initSearchSelect);
+
+        /*
+         * Cada option-select se convierte en un desplegable personalizado.
+         */
+        document
+            .querySelectorAll('.option-select')
+            .forEach(initOptionSelect);
+
+        /*
+         * Finalmente se solicita al backend la lista de nodos y se incorporan a los
+         * filtros creados anteriormente.
+         */
+        cargarNodosReporte();
+    });
+</script>
+<!--
+    Script compartido encargado de gestionar el tema visual y mantener la
+    preferencia seleccionada de forma coherente con el resto de la aplicacion.
+-->
+<script src="theme.js"></script>
+
+</body>
+</html>

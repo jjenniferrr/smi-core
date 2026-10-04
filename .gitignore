@@ -1,0 +1,16 @@
+.agents/
+.venv/
+__pycache__/
+*.pyc
+smi_core.db-journal
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!.env.example
+flask-out.log
+flask-err.log
+server-test.out.txt
+server-test.err.txt

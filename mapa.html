@@ -1,0 +1,1532 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <!--
+        ============================================================================
+        ARCHIVO: mapa.html
+        DESCRIPCION GENERAL
+        ============================================================================
+
+        Este archivo implementa la vista de mapa de planta del sistema S.M.I. CORE.
+
+        Su finalidad consiste en representar de forma espacial los nodos de
+        monitorizacion sobre un plano simplificado de la fabrica. De este modo, el
+        usuario no solo puede conocer si existe una incidencia, sino tambien
+        localizar visualmente la zona industrial en la que se encuentra el nodo
+        afectado.
+
+        El plano base se dibuja mediante SVG y representa distintas zonas de la
+        instalacion, como:
+        - Nave de produccion.
+        - Almacen logistico.
+        - Salas tecnicas.
+        - Zona exterior.
+        - Maquinaria y areas internas de trabajo.
+
+        Sobre este plano se insertan dinamicamente puntos correspondientes a los
+        nodos recibidos desde el backend.
+
+        Cada punto puede adoptar tres estados visuales:
+        - Verde: funcionamiento nominal.
+        - Rojo: existe al menos una condicion de alerta.
+        - Gris: estado fuera de linea o valor inicial antes de recibir datos.
+
+        Los nodos conocidos disponen de coordenadas predefinidas mediante el objeto
+        NODO_POSICIONES. Cuando aparece un nodo que no tiene una ubicacion
+        configurada, la funcion posicionDinamica() le asigna una posicion de
+        respaldo para que siga siendo visible en el mapa.
+
+        Al situar el cursor sobre un nodo se muestra un tooltip con:
+        - Identificador del nodo.
+        - Temperatura.
+        - Humedad.
+        - Nivel de sonido.
+        - Presion.
+        - Estado nominal o causas activas de alerta.
+
+        Cada nodo puede proporcionar ademas sus propios umbrales de temperatura,
+        humedad y sonido. Cuando estos valores existen, tienen prioridad sobre los
+        limites globales definidos en esta vista.
+
+        FLUJO GENERAL DE FUNCIONAMIENTO
+        --------------------------------
+        1. Se representa el plano SVG de la planta.
+        2. Se inicia un reloj visual actualizado cada segundo.
+        3. Se solicita al backend la ultima lectura disponible de cada nodo.
+        4. Se eliminan del mapa los nodos que ya no aparecen en la respuesta.
+        5. Para cada nodo se obtiene una posicion fija o dinamica.
+        6. Si el punto todavia no existe, se crea dinamicamente.
+        7. Se convierten las magnitudes recibidas a valores numericos.
+        8. Se calculan los umbrales efectivos del nodo.
+        9. Se determina si la lectura se encuentra en estado nominal o de alerta.
+        10. Se actualizan el color del punto y el contenido del tooltip.
+        11. La consulta completa se repite automaticamente cada cinco segundos.
+
+        La obtencion y persistencia de la telemetria corresponde al backend. Esta
+        pagina se encarga de interpretar las ultimas lecturas y representarlas
+        espacialmente dentro del gemelo digital simplificado de la planta.
+        ============================================================================
+    -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>S.M.I. CORE | Mapa de Planta</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script>document.documentElement.setAttribute('data-theme', localStorage.getItem('smi-theme') || 'dark');</script>
+    <link href="theme.css" rel="stylesheet">
+    
+    <style>
+        /*
+         * =========================================================================
+         * VARIABLES GLOBALES DE ESTILO
+         * =========================================================================
+         * La paleta incluye colores generales y tonos especificos del plano CAD.
+         */
+        :root {
+            --bg-main: #0d1117;
+            --panel-bg: #161b22;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --border: #30363d;
+            --text-main: #e6edf3;
+            --text-dim: #7d8590;
+            --blueprint-line: #1f3659;
+            --blueprint-grid: #121820;
+        }
+
+        /*
+         * =========================================================================
+         * CONFIGURACION GENERAL DE LA PAGINA
+         * =========================================================================
+         * Se utiliza una distribucion horizontal con menu lateral fijo y contenido
+         * principal desplazable.
+         */
+        body {
+            background-color: var(--bg-main); color: var(--text-main);
+            font-family: 'Inter', sans-serif; font-size: 14px; margin: 0; padding: 0; display: flex; height: 100vh; overflow: hidden;
+        }
+        *, *::before, *::after { box-sizing: border-box; }
+        .text-muted { color: #9aa4b2 !important; }
+
+        /*
+         * =========================================================================
+         * SIDEBAR MAESTRO
+         * =========================================================================
+         * Mantiene la navegacion principal visible en pantallas de escritorio.
+         */
+        .sidebar { width: 260px; height: 100vh; background: var(--panel-bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 30px 20px; position: fixed; z-index: 100; }
+        .logo-box { margin-bottom: 40px; padding-left: 10px; }
+        .nav-list { flex-grow: 1; }
+        .nav-item { padding: 10px 14px; color: var(--text-dim); text-decoration: none; display: flex; align-items: center; border-radius: 6px; margin-bottom: 5px; font-weight: 500; transition: all 0.2s ease; }
+        .nav-item:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-main); }
+        .nav-item.active { background: rgba(88, 166, 255, 0.1); color: var(--accent-blue); border: 1px solid rgba(88, 166, 255, 0.2); }
+        .sidebar-divider { height: 1px; background: var(--border); margin: 15px 0; }
+        .sidebar-label { color: var(--text-dim); font-size: 9px; text-transform: uppercase; letter-spacing: 1px; padding-left: 14px; margin-bottom: 10px; display: block; }
+
+        /*
+         * =========================================================================
+         * CONTENIDO PRINCIPAL
+         * =========================================================================
+         * El margen izquierdo compensa la anchura del menu lateral.
+         */
+        .main-content { 
+            margin-left: 260px; 
+            padding: 30px 40px; /* Reducido el padding superior */
+            flex-grow: 1; 
+            overflow-y: auto; 
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .header-area {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 15px; /* Reducido el margen inferior del título */
+        }
+        
+        .section-title { font-size: 1.25rem; font-weight: 700; color: var(--text-main); margin-bottom: 2px; }
+
+        /*
+         * =========================================================================
+         * PLANO DE LA PLANTA - BLUEPRINT SVG
+         * =========================================================================
+         * El contenedor actua como superficie sobre la que se superponen los
+         * puntos de sensores creados dinamicamente.
+         */
+        .map-container {
+            position: relative; background: #090c10; border: 1px solid var(--border); border-radius: 12px;
+            height: 620px; /* Un poco más de altura para aprovechar el espacio */
+            width: 100%; max-width: 1100px; margin: 0 auto; overflow: hidden; box-shadow: inset 0 0 50px rgba(0,0,0,0.8);
+        }
+        .blueprint-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+
+        /*
+         * =========================================================================
+         * SENSORES: PUNTOS Y ESTADOS VISUALES
+         * =========================================================================
+         * Cada nodo se representa mediante un punto absoluto sobre el plano.
+         */
+        .sensor-point {
+            position: absolute; width: 16px; height: 16px; border-radius: 50%; cursor: pointer; z-index: 10;
+            border: 2px solid #090c10; transition: transform 0.2s; margin-top: -8px; margin-left: -8px; 
+        }
+        .sensor-point:hover { transform: scale(1.3); z-index: 30; }
+        .status-ok { background: var(--accent-green); box-shadow: 0 0 12px rgba(63, 185, 80, 0.8); }
+        .status-alert { background: var(--accent-red); box-shadow: 0 0 15px rgba(248, 81, 73, 0.8); animation: pulse-alert 1s infinite; z-index: 15;}
+        .status-offline { background: var(--text-dim); box-shadow: none; }
+
+        @keyframes pulse-alert {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(248, 81, 73, 0.7); }
+            70% { transform: scale(1.1); box-shadow: 0 0 0 15px rgba(248, 81, 73, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(248, 81, 73, 0); }
+        }
+
+        /*
+         * =========================================================================
+         * TOOLTIP DE TELEMETRIA
+         * =========================================================================
+         * Permanece oculto hasta que el usuario situa el cursor sobre un nodo.
+         */
+        .sensor-tooltip {
+            display: none; position: absolute; background: rgba(22, 27, 34, 0.95);
+            backdrop-filter: blur(10px); pointer-events: none;
+            color: var(--text-main); text-transform: none; letter-spacing: normal;
+            border-radius: 6px; z-index: 20; transition: all 0.2s ease;
+        }
+        
+        .sensor-point:hover .sensor-tooltip { display: block; }
+        
+        .sensor-tooltip strong { color: var(--accent-blue); display: block; margin-bottom: 6px; border-bottom: 1px solid var(--border); padding-bottom: 4px;}
+        .sensor-tooltip .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 6px;}
+        .sensor-tooltip span { font-family: 'JetBrains Mono', monospace; font-weight: 600; }
+        
+        /*
+         * =========================================================================
+         * TAMAÑOS DINAMICOS DEL TOOLTIP
+         * =========================================================================
+         * Las alertas utilizan un tooltip de mayor tamano para mostrar las causas
+         * de la incidencia.
+         */
+        .tooltip-ok {
+            width: 160px; padding: 10px; font-size: 11px;
+            border: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,0.8);
+        }
+        .tooltip-alert {
+            width: 230px; padding: 14px; font-size: 13px;
+            border: 1px solid var(--accent-red); box-shadow: 0 8px 30px rgba(248, 81, 73, 0.3);
+        }
+        .alert-msg { color: var(--accent-red); font-weight: 700; font-size: 10px; display: block; text-transform: uppercase; margin-top: 4px;}
+        .ok-msg { color: var(--accent-green); font-weight: 700; font-size: 9px; display: block; text-transform: uppercase; margin-top: 4px;}
+
+        /*
+         * =========================================================================
+         * POSICIONAMIENTO DEL TOOLTIP
+         * =========================================================================
+         * pos-right y pos-left permiten orientar el tooltip hacia el interior del
+         * plano y reducir el riesgo de que quede fuera del contenedor.
+         */
+        .pos-right { top: 50%; left: 24px; transform: translateY(-50%); }
+        .pos-left { top: 50%; right: 24px; transform: translateY(-50%); }
+
+        /*
+         * =========================================================================
+         * LEYENDA DEL MAPA
+         * =========================================================================
+         * Explica el significado de los colores utilizados por los puntos.
+         */
+        .legend { margin-top: 15px; display: flex; gap: 24px; font-size: 12px; color: var(--text-dim); justify-content: center; padding-bottom: 10px;}
+        .legend-item { display: flex; align-items: center; gap: 8px; }
+        .dot-legend { width: 12px; height: 12px; border-radius: 50%; }
+
+        /*
+         * =========================================================================
+         * DISENO RESPONSIVE PARA TABLETS
+         * =========================================================================
+         * El menu deja de ser lateral y el plano adopta una relacion de aspecto
+         * flexible.
+         */
+        @media (max-width: 980px) {
+            body { display: block; height: auto; overflow: auto; }
+            .sidebar {
+                position: static;
+                width: 100%;
+                max-width: 100%;
+                height: auto;
+                padding: 18px;
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+            }
+            .logo-box { margin-bottom: 18px; padding-left: 0; }
+            .nav-list, .sidebar-footer {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 8px;
+            }
+            .nav-item { margin-bottom: 0; min-height: 42px; }
+            .main-content { margin-left: 0; padding: 24px; }
+            .header-area { flex-direction: column; gap: 8px; }
+            .map-container { height: auto; aspect-ratio: 16 / 10; max-width: 100%; }
+            .legend { flex-wrap: wrap; justify-content: flex-start; gap: 12px; }
+        }
+
+        /*
+         * =========================================================================
+         * DISENO RESPONSIVE PARA MOVILES
+         * =========================================================================
+         * Se reduce el espacio disponible y el mapa utiliza una relacion 4:3.
+         */
+        @media (max-width: 560px) {
+            .main-content { padding: 18px 14px; }
+            .sidebar { position: sticky; top: 0; z-index: 1000; padding: 12px; }
+            .logo-box { margin-bottom: 10px; }
+            .nav-list, .sidebar-footer {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
+                overflow-x: hidden;
+                gap: 8px;
+                padding-bottom: 4px;
+                scrollbar-width: none;
+            }
+            .nav-list::-webkit-scrollbar, .sidebar-footer::-webkit-scrollbar { display: none; }
+            .sidebar-footer { margin-top: 8px; }
+            .sidebar-footer > div, .sidebar-label { display: none; }
+            .nav-item { min-width: 0; min-height: 36px; white-space: normal; overflow-wrap: anywhere; justify-content: center; text-align: center; padding: 8px 12px; font-size: 13px; }
+            .map-container {
+                width: 100%;
+                min-width: 0;
+                height: auto;
+                aspect-ratio: 4 / 3;
+            }
+            .main-content { overflow-x: hidden; }
+            .tooltip-ok, .tooltip-alert { width: 190px; }
+        }
+    </style>
+</head>
+<body>
+
+<!--
+    ============================================================================
+    NAVEGACION PRINCIPAL
+    ============================================================================
+    La opcion Mapa de Planta aparece marcada como activa.
+-->
+<nav class="sidebar">
+    <div class="logo-box">
+        <h5 class="text-white fw-bold mb-0">S.M.I. <span style="color:var(--accent-blue)">CORE</span></h5>
+        <small class="text-muted" style="font-size: 10px; font-family: 'JetBrains Mono';">VER. 2.6.0-STABLE</small>
+    </div>
+        <div class="nav-list">
+        <a href="index.html" class="nav-item">Dashboard Vivo</a>
+        <a href="mapa.html" class="nav-item active">Mapa de Planta</a>
+        <a href="mantenimiento.html" class="nav-item">Analisis por Zonas</a>
+        <a href="historial.html" class="nav-item">Historial de Datos</a>
+        <a href="reportes.html" class="nav-item">Reportes</a>
+    </div>
+    <div class="sidebar-footer">
+        <div class="sidebar-divider"></div>
+        <small class="sidebar-label">Administracion</small>
+        <a href="configurar-sistema.html" class="nav-item">Configurar Sistema</a>
+        <a href="historial-configuracion.html" class="nav-item">Registro Config.</a>
+    </div>
+</nav>
+
+<!--
+    ============================================================================
+    CONTENIDO PRINCIPAL DEL MAPA
+    ============================================================================
+-->
+<main class="main-content">
+
+    <!--
+        CABECERA DE LA VISTA
+        Presenta el titulo del gemelo digital y un reloj actualizado cada segundo.
+    -->
+    <div class="header-area">
+        <div>
+            <h4 class="section-title">Distribución Geoespacial (CAD)</h4>
+            <p class="text-muted small m-0">Gemelo digital interactivo y ubicación de maquinaria.</p>
+        </div>
+        <div class="text-end">
+            <span id="reloj" style="font-family: 'JetBrains Mono'; color: var(--accent-blue); font-size: 1.2rem;">00:00:00</span>
+        </div>
+    </div>
+
+    <!--
+    ============================================================================
+    CONTENEDOR DEL MAPA DE PLANTA
+    ============================================================================
+    Este bloque representa gráficamente la distribución de la planta industrial.
+
+    El plano se dibuja mediante SVG, lo que permite representar las distintas
+    zonas, líneas de producción, almacenes y maquinaria utilizando coordenadas
+    vectoriales.
+
+    Sobre este contenedor se incorporarán posteriormente mediante JavaScript los
+    puntos correspondientes a los sensores de cada nodo.
+
+    El atributo id="map-container" permite localizar este elemento desde
+    JavaScript mediante document.getElementById() para insertar dinámicamente
+    los indicadores de los sensores.
+-->
+<div class="map-container" id="map-container">
+
+    <!--
+        ============================================================================
+        PLANO VECTORIAL DE LA PLANTA
+        ============================================================================
+
+        SVG permite construir el plano utilizando figuras geométricas como:
+
+        - rect: rectángulos.
+        - path: líneas o trayectorias.
+        - circle: círculos.
+        - text: etiquetas descriptivas.
+
+        viewBox="0 0 1000 600"
+        ----------------------
+        Define el sistema interno de coordenadas del SVG:
+
+        - Coordenada X inicial: 0.
+        - Coordenada Y inicial: 0.
+        - Anchura lógica: 1000 unidades.
+        - Altura lógica: 600 unidades.
+
+        Esto permite trabajar con coordenadas independientes del tamaño físico
+        que finalmente tenga el mapa en pantalla.
+
+        preserveAspectRatio="none"
+        --------------------------
+        Permite que el plano se adapte completamente a las dimensiones de su
+        contenedor, aunque para ello pueda alterar ligeramente su proporción.
+
+        class="blueprint-svg"
+        ---------------------
+        Permite aplicar desde CSS los estilos generales correspondientes al plano.
+    -->
+    <svg
+        viewBox="0 0 1000 600"
+        preserveAspectRatio="none"
+        class="blueprint-svg"
+    >
+
+        <!--
+            =========================================================================
+            DEFINICIONES REUTILIZABLES DEL SVG
+            =========================================================================
+
+            El elemento <defs> contiene recursos gráficos que no se muestran
+            directamente, sino que posteriormente pueden reutilizarse en otros
+            elementos del SVG.
+
+            En este caso se define una cuadrícula de fondo.
+        -->
+        <defs>
+
+            <!--
+                Patrón denominado "grid".
+
+                width="20" y height="20"
+                ---------------------------
+                Cada celda de la cuadrícula ocupa 20 x 20 unidades dentro del
+                sistema de coordenadas del SVG.
+
+                patternUnits="userSpaceOnUse"
+                -----------------------------
+                Indica que las dimensiones del patrón utilizan las mismas unidades
+                que el viewBox principal.
+            -->
+            <pattern
+                id="grid"
+                width="20"
+                height="20"
+                patternUnits="userSpaceOnUse"
+            >
+
+                <!--
+                    Se dibujan dos segmentos que forman los bordes superior e
+                    izquierdo de cada celda de la cuadrícula.
+
+                    El atributo d contiene las instrucciones de dibujo:
+
+                    M 20 0
+                        M = Move.
+                        Sitúa el punto inicial en la coordenada (20, 0).
+
+                    L 0 0
+                        L = Line.
+                        Dibuja una línea hasta (0, 0).
+
+                    0 20
+                        Continúa la línea hasta (0, 20).
+
+                    fill="none"
+                        El elemento no tiene relleno.
+
+                    stroke
+                        Define el color de las líneas.
+
+                    stroke-width="1"
+                        Define un grosor fino para que la cuadrícula tenga un
+                        carácter secundario respecto al resto del plano.
+                -->
+                <path
+                    d="M 20 0 L 0 0 0 20"
+                    fill="none"
+                    stroke="var(--blueprint-grid)"
+                    stroke-width="1"
+                />
+
+            </pattern>
+        </defs>
+
+
+        <!--
+            =========================================================================
+            FONDO DEL PLANO
+            =========================================================================
+
+            Este rectángulo ocupa toda la superficie disponible del SVG.
+
+            width="100%" y height="100%"
+                Hacen que el elemento cubra completamente el plano.
+
+            fill="url(#grid)"
+                Utiliza como relleno el patrón de cuadrícula definido anteriormente
+                mediante el identificador "grid".
+        -->
+        <rect
+            width="100%"
+            height="100%"
+            fill="url(#grid)"
+        />
+
+
+        <!--
+            =========================================================================
+            PERÍMETRO PRINCIPAL DE LA FÁBRICA
+            =========================================================================
+
+            Este rectángulo representa los límites generales de la instalación.
+
+            x="50" / y="50"
+                Determinan la posición de la esquina superior izquierda.
+
+            width="900" / height="500"
+                Determinan las dimensiones del recinto.
+
+            fill="none"
+                Permite visualizar únicamente su contorno.
+
+            stroke-opacity="0.5"
+                Reduce la intensidad de la línea para mantener el efecto visual
+                de plano técnico.
+        -->
+        <rect
+            x="50"
+            y="50"
+            width="900"
+            height="500"
+            fill="none"
+            stroke="var(--accent-blue)"
+            stroke-width="3"
+            stroke-opacity="0.5"
+        />
+
+
+        <!--
+            =========================================================================
+            DIVISIÓN VERTICAL PRINCIPAL
+            =========================================================================
+
+            Esta línea divide el edificio aproximadamente en dos grandes bloques.
+
+            Parte de la coordenada (500, 50) y termina en (500, 550).
+
+            Al mantenerse la coordenada X constante en 500 se obtiene una línea
+            completamente vertical.
+        -->
+        <path
+            d="M 500 50 L 500 550"
+            fill="none"
+            stroke="var(--accent-blue)"
+            stroke-width="2"
+            stroke-opacity="0.5"
+        />
+
+
+        <!--
+            =========================================================================
+            DIVISIÓN HORIZONTAL DE LA ZONA DERECHA
+            =========================================================================
+
+            Separa el almacén logístico situado en la parte superior de las salas
+            técnicas situadas en la parte inferior.
+
+            La línea comienza en (500, 300) y termina en (950, 300).
+
+            Como la coordenada Y permanece constante, se obtiene una línea
+            horizontal.
+        -->
+        <path
+            d="M 500 300 L 950 300"
+            fill="none"
+            stroke="var(--accent-blue)"
+            stroke-width="2"
+            stroke-opacity="0.5"
+        />
+
+
+        <!--
+            =========================================================================
+            ETIQUETAS DE LAS ZONAS INDUSTRIALES
+            =========================================================================
+
+            Los elementos <text> permiten identificar visualmente cada una de las
+            áreas representadas en el plano.
+
+            Las coordenadas x e y determinan la posición del texto.
+
+            Se utiliza la tipografía JetBrains Mono para reforzar el aspecto de
+            plano técnico o industrial.
+        -->
+
+        <!--
+            Zona principal de producción.
+
+            Se encuentra en el bloque izquierdo de la nave.
+        -->
+        <text
+            x="70"
+            y="80"
+            fill="var(--text-dim)"
+            font-family="JetBrains Mono"
+            font-size="12"
+            font-weight="bold"
+        >
+            NAVE A: PRODUCCIÓN
+        </text>
+
+
+        <!--
+            Zona de almacén y operaciones logísticas.
+
+            Se representa en el cuadrante superior derecho.
+        -->
+        <text
+            x="520"
+            y="80"
+            fill="var(--text-dim)"
+            font-family="JetBrains Mono"
+            font-size="12"
+            font-weight="bold"
+        >
+            ALMACÉN LOGÍSTICO
+        </text>
+
+
+        <!--
+            Zona destinada a maquinaria, instalaciones y equipos técnicos.
+
+            Se encuentra en la parte inferior derecha.
+        -->
+        <text
+            x="520"
+            y="330"
+            fill="var(--text-dim)"
+            font-family="JetBrains Mono"
+            font-size="12"
+            font-weight="bold"
+        >
+            SALAS TÉCNICAS (MAQUINARIA)
+        </text>
+
+
+        <!--
+            Zona situada fuera del perímetro principal de la fábrica.
+
+            Permite ubicar conceptualmente sensores meteorológicos o ambientales
+            instalados en el exterior.
+        -->
+        <text
+            x="10"
+            y="30"
+            fill="#4b5563"
+            font-family="JetBrains Mono"
+            font-size="12"
+            font-weight="bold"
+        >
+            ZONA EXTERIOR
+        </text>
+
+
+        <!--
+            =========================================================================
+            LÍNEA DE PRODUCCIÓN A
+            =========================================================================
+
+            Este rectángulo alargado representa de forma esquemática una línea de
+            producción situada en la Nave A.
+
+            rx="8"
+                Redondea ligeramente las esquinas del rectángulo.
+        -->
+        <rect
+            x="150"
+            y="150"
+            width="80"
+            height="320"
+            rx="8"
+            fill="none"
+            stroke="var(--blueprint-line)"
+            stroke-width="2"
+        />
+
+
+        <!--
+            Línea central de la primera línea de producción.
+
+            stroke-dasharray="5 5"
+                Crea una línea discontinua formada por segmentos de 5 unidades
+                separados por espacios de otras 5 unidades.
+
+            Puede utilizarse para representar el eje, cinta transportadora o
+            recorrido interno de la línea productiva.
+        -->
+        <path
+            d="M 190 150 L 190 470"
+            fill="none"
+            stroke="var(--blueprint-line)"
+            stroke-width="1"
+            stroke-dasharray="5 5"
+        />
+
+
+        <!--
+            =========================================================================
+            LÍNEA DE PRODUCCIÓN B
+            =========================================================================
+
+            Segunda estructura productiva de la Nave A.
+
+            Se utiliza la misma representación que en la primera línea para
+            mantener coherencia visual.
+        -->
+        <rect
+            x="300"
+            y="150"
+            width="80"
+            height="320"
+            rx="8"
+            fill="none"
+            stroke="var(--blueprint-line)"
+            stroke-width="2"
+        />
+
+
+        <!--
+            Eje o recorrido interno de la segunda línea de producción.
+        -->
+        <path
+            d="M 340 150 L 340 470"
+            fill="none"
+            stroke="var(--blueprint-line)"
+            stroke-width="1"
+            stroke-dasharray="5 5"
+        />
+
+
+        <!--
+            =========================================================================
+            ELEMENTOS DEL ALMACÉN LOGÍSTICO
+            =========================================================================
+
+            Los siguientes rectángulos representan de manera esquemática zonas de
+            almacenamiento, estanterías, mercancías o equipos logísticos.
+        -->
+
+        <!-- Primer módulo del almacén. -->
+        <rect
+            x="550"
+            y="120"
+            width="140"
+            height="40"
+            fill="none"
+            stroke="var(--blueprint-line)"
+            stroke-width="2"
+        />
+
+
+        <!-- Segundo módulo del almacén. -->
+        <rect
+            x="750"
+            y="120"
+            width="140"
+            height="40"
+            fill="none"
+            stroke="var(--blueprint-line)"
+            stroke-width="2"
+        />
+
+
+        <!--
+            Elemento central del almacén.
+
+            Su mayor altura permite diferenciarlo visualmente de los dos módulos
+            superiores.
+        -->
+        <rect
+            x="650"
+            y="220"
+            width="140"
+            height="60"
+            fill="none"
+            stroke="var(--blueprint-line)"
+            stroke-width="2"
+        />
+
+
+        <!--
+            Las dos diagonales forman una X dentro del elemento anterior.
+
+            En SVG pueden incluirse varios segmentos dentro del mismo atributo d:
+
+            M 650 220 L 790 280
+                Primera diagonal.
+
+            M 650 280 L 790 220
+                Segunda diagonal.
+
+            Esta representación sirve para diferenciar el elemento como maquinaria,
+            zona restringida o estructura logística especial.
+        -->
+        <path
+            d="M 650 220 L 790 280 M 650 280 L 790 220"
+            fill="none"
+            stroke="var(--blueprint-line)"
+            stroke-width="1"
+        />
+
+
+        <!--
+            =========================================================================
+            EQUIPOS DE LAS SALAS TÉCNICAS
+            =========================================================================
+
+            Los círculos representan de forma esquemática maquinaria industrial,
+            depósitos, calderas u otros equipos de geometría circular.
+        -->
+
+        <!-- Primer equipo técnico circular. -->
+        <circle
+            cx="620"
+            cy="400"
+            r="35"
+            fill="none"
+            stroke="var(--blueprint-line)"
+            stroke-width="2"
+        />
+
+
+        <!--
+            Segundo equipo técnico circular situado debajo del anterior.
+
+            cx y cy representan las coordenadas del centro.
+            r define un radio de 35 unidades.
+        -->
+        <circle
+            cx="620"
+            cy="490"
+            r="35"
+            fill="none"
+            stroke="var(--blueprint-line)"
+            stroke-width="2"
+        />
+
+
+        <!--
+            =========================================================================
+            BLOQUE DE MAQUINARIA / SALA TÉCNICA
+            =========================================================================
+
+            Este rectángulo representa una zona técnica de mayor tamaño que puede
+            contener varios equipos o máquinas.
+        -->
+        <rect
+            x="720"
+            y="380"
+            width="180"
+            height="120"
+            fill="none"
+            stroke="var(--blueprint-line)"
+            stroke-width="2"
+        />
+
+
+        <!--
+            Divisiones internas del bloque técnico.
+
+            Primera línea:
+                M 720 440 L 900 440
+                Divide horizontalmente el recinto.
+
+            Segunda línea:
+                M 810 380 L 810 500
+                Divide verticalmente el recinto.
+
+            El resultado es una distribución en cuatro sectores.
+
+            stroke-dasharray="4 4"
+                Representa estas divisiones mediante línea discontinua para
+                diferenciarlas del perímetro exterior.
+        -->
+        <path
+            d="M 720 440 L 900 440 M 810 380 L 810 500"
+            fill="none"
+            stroke="var(--blueprint-line)"
+            stroke-width="1"
+            stroke-dasharray="4 4"
+        />
+    </svg>
+</div>
+
+    <!--
+        LEYENDA DE ESTADOS
+        Verde representa operacion nominal, rojo una alerta y gris desconexion.
+    -->
+    <div class="legend">
+        <div class="legend-item"><div class="dot-legend" style="background:var(--accent-green); box-shadow: 0 0 8px var(--accent-green);"></div> Operación Nominal</div>
+        <div class="legend-item"><div class="dot-legend" style="background:var(--accent-red); box-shadow: 0 0 8px var(--accent-red);"></div> Alerta Crítica (Detección)</div>
+        <div class="legend-item"><div class="dot-legend" style="background:var(--text-dim);"></div> Sensor Fuera de Línea</div>
+    </div>
+</main>
+
+<script>
+    /*
+     * ============================================================================
+     * LOGICA DEL MAPA DE PLANTA
+     * ============================================================================
+     *
+     * Este bloque JavaScript se encarga de:
+     * - Definir los limites generales de alerta.
+     * - Mantener actualizado el reloj de la vista.
+     * - Asociar nodos conocidos con coordenadas predefinidas.
+     * - Asignar posiciones de respaldo a nodos desconocidos.
+     * - Consultar las ultimas lecturas desde la API.
+     * - Crear y eliminar puntos del mapa de forma dinamica.
+     * - Evaluar los umbrales de cada nodo.
+     * - Actualizar colores, tooltips y mensajes de alerta.
+     * - Permitir navegar al detalle de cada nodo.
+     * ============================================================================
+     */
+
+
+    /*
+     * LIMITES GLOBALES DE REFERENCIA
+     * -------------------------------------------------------------------------
+     *
+     * Estos valores se utilizan solamente cuando el backend no devuelve un umbral
+     * especifico para el nodo.
+     */
+    const LIMITES = {
+        temp: 35,
+        hum: 80,
+        min_hum: 20,
+        sonido: 85
+    };
+
+
+    /*
+     * URL BASE DE LA API.
+     *
+     * En un despliegue HTTP/HTTPS se utiliza el mismo origen desde el que se sirve
+     * la pagina. Si el archivo se abre localmente se utiliza localhost:5000.
+     */
+    const API_BASE = window.location.protocol.startsWith('http')
+        ? window.location.origin
+        : 'http://localhost:5000';
+
+
+    /*
+     * ============================================================================
+     * RELOJ DE LA INTERFAZ
+     * ============================================================================
+     *
+     * setInterval() ejecuta la funcion cada 1.000 milisegundos, actualizando la
+     * hora visible una vez por segundo.
+     */
+    setInterval(
+        () => {
+            document.getElementById('reloj').innerText =
+                new Date().toLocaleTimeString();
+        },
+        1000
+    );
+
+
+    /*
+     * ============================================================================
+     * POSICIONES PREDEFINIDAS DE NODOS
+     * ============================================================================
+     *
+     * Cada propiedad utiliza el identificador de un nodo como clave.
+     *
+     * top y left expresan la posicion relativa dentro del mapa mediante
+     * porcentajes, permitiendo que la ubicacion se adapte al tamano del contenedor.
+     *
+     * pos determina hacia que lado debe abrirse el tooltip.
+     */
+    const NODO_POSICIONES = {
+        'SIM_EXTERIOR': {
+            top: '9%',
+            left: '4%',
+            pos: 'pos-right'
+        },
+
+        'SIM_ALMACEN_02': {
+            top: '23%',
+            left: '82%',
+            pos: 'pos-left'
+        },
+
+        'SIM_LINEA_PROD_A': {
+            top: '30%',
+            left: '19%',
+            pos: 'pos-right'
+        },
+
+        'FISICO_ARDUINO': {
+            top: '70%',
+            left: '19%',
+            pos: 'pos-right'
+        },
+
+        'SIM_LINEA_PROD_B': {
+            top: '50%',
+            left: '34%',
+            pos: 'pos-right'
+        },
+
+        'SIM_ALMACEN_01': {
+            top: '23%',
+            left: '62%',
+            pos: 'pos-left'
+        },
+
+        'SIM_ZONA_CARGA': {
+            top: '41%',
+            left: '72%',
+            pos: 'pos-left'
+        },
+
+        'SIM_SALA_MAQUINAS': {
+            top: '66.6%',
+            left: '62%',
+            pos: 'pos-left'
+        },
+
+        'SIM_CALDERAS': {
+            top: '81.6%',
+            left: '62%',
+            pos: 'pos-left'
+        },
+
+        'SIM_CUARTO_FRIO': {
+            top: '73.3%',
+            left: '81%',
+            pos: 'pos-left'
+        },
+
+        'SIM_MAQUINA_PESADA': {
+            top: '72%',
+            left: '88%',
+            pos: 'pos-left'
+        }
+    };
+
+
+    /**
+     * Devuelve una posicion de respaldo para un nodo sin coordenadas predefinidas.
+     *
+     * La funcion utiliza una lista finita de posiciones genericas. Cuando existen
+     * mas nodos desconocidos que posiciones disponibles, el operador modulo %
+     * permite reutilizar el array de forma circular.
+     *
+     * @param {number} index Posicion del nodo dentro de la respuesta de la API.
+     * @returns {Object} Coordenadas top/left y orientacion del tooltip.
+     */
+    function posicionDinamica(index) {
+        /*
+         * Las posiciones se expresan inicialmente como numeros para facilitar su
+         * lectura y posteriormente se convierten a porcentajes.
+         */
+        const posiciones = [
+            { top: 16, left: 12 },
+            { top: 16, left: 28 },
+            { top: 16, left: 44 },
+            { top: 88, left: 24 },
+            { top: 88, left: 44 },
+            { top: 88, left: 76 }
+        ];
+
+        /*
+         * El operador % devuelve el resto de la division. De esta forma el indice
+         * nunca supera la longitud disponible del array.
+         */
+        const pos =
+            posiciones[
+                index % posiciones.length
+            ];
+
+        /*
+         * Los nodos situados cerca del extremo derecho abren el tooltip hacia la
+         * izquierda para reducir el riesgo de que salga del mapa.
+         */
+        return {
+            top: `${pos.top}%`,
+            left: `${pos.left}%`,
+            pos:
+                pos.left > 70
+                    ? 'pos-left'
+                    : 'pos-right'
+        };
+    }
+
+
+    /**
+     * Consulta la ultima lectura de los nodos y reconstruye el estado del mapa.
+     *
+     * En cada refresco:
+     * - Se eliminan los puntos correspondientes a nodos que ya no existen.
+     * - Se crean los puntos nuevos.
+     * - Se recalculan sus estados.
+     * - Se actualiza el contenido de sus tooltips.
+     *
+     * @returns {Promise<void>}
+     */
+    async function fetchMapData() {
+        try {
+            /*
+             * El mapa utiliza la misma instantanea reciente que el dashboard
+             * principal.
+             */
+            const response =
+                await fetch(
+                    `${API_BASE}/api/datos_recientes`
+                );
+
+            /*
+             * La respuesta JSON se transforma en un array de objetos JavaScript.
+             */
+            const data =
+                await response.json();
+
+
+            /*
+             * =========================================================================
+             * ELIMINACION DE NODOS QUE YA NO EXISTEN
+             * =========================================================================
+             *
+             * map() extrae los identificadores de la respuesta y Set permite
+             * comprobar posteriormente su pertenencia de forma eficiente.
+             */
+            const currentIds =
+                new Set(
+                    data.map(
+                        nodo => nodo.nodo_id
+                    )
+                );
+
+            /*
+             * Se recorren todos los puntos actualmente dibujados.
+             */
+            document
+                .querySelectorAll('.sensor-point')
+                .forEach(point => {
+                    /*
+                     * El identificador DOM tiene el prefijo MAP_NODO_. replace()
+                     * permite recuperar el identificador original.
+                     */
+                    const id =
+                        point.id.replace(
+                            'MAP_NODO_',
+                            ''
+                        );
+
+                    /*
+                     * Si el nodo ya no aparece en la respuesta se elimina del DOM.
+                     */
+                    if (!currentIds.has(id)) {
+                        point.remove();
+                    }
+                });
+
+
+            /*
+             * =========================================================================
+             * CREACION Y ACTUALIZACION DE NODOS
+             * =========================================================================
+             */
+            data.forEach((nodo, index) => {
+                const id =
+                    nodo.nodo_id;
+
+                /*
+                 * Se busca primero una configuracion fija.
+                 *
+                 * El operador || utiliza posicionDinamica() solamente cuando no
+                 * existe una entrada con ese identificador.
+                 */
+                const posConfig =
+                    NODO_POSICIONES[id]
+                    || posicionDinamica(index);
+
+                /*
+                 * Cada nodo utiliza un identificador DOM derivado del nodo real.
+                 */
+                let mapPoint =
+                    document.getElementById(
+                        'MAP_NODO_' + id
+                    );
+
+
+                /*
+                 * CREACION DEL PUNTO
+                 * -----------------------------------------------------------------
+                 *
+                 * El elemento solo se crea la primera vez que aparece el nodo.
+                 */
+                if (!mapPoint) {
+                    mapPoint =
+                        document.createElement('div');
+
+                    mapPoint.id =
+                        'MAP_NODO_' + id;
+
+                    /*
+                     * Inicialmente se utiliza status-offline hasta evaluar la
+                     * lectura actual.
+                     */
+                    mapPoint.className =
+                        'sensor-point status-offline';
+
+                    /*
+                     * Las coordenadas relativas posicionan el punto sobre el plano.
+                     */
+                    mapPoint.style.top =
+                        posConfig.top;
+
+                    mapPoint.style.left =
+                        posConfig.left;
+
+                    /*
+                     * Cada punto funciona tambien como acceso directo a la vista de
+                     * detalle.
+                     *
+                     * encodeURIComponent() codifica el identificador antes de
+                     * incorporarlo a la URL.
+                     */
+                    mapPoint.onclick = () => {
+                        window.location.href =
+                            `detalle-nodo.html?nodo=${encodeURIComponent(id)}`;
+                    };
+
+                    /*
+                     * Se crea un contenedor vacio que posteriormente actuara como
+                     * tooltip.
+                     */
+                    const tooltip =
+                        document.createElement('div');
+
+                    mapPoint.appendChild(
+                        tooltip
+                    );
+
+                    document
+                        .getElementById('map-container')
+                        .appendChild(mapPoint);
+                }
+
+
+                /*
+                 * =========================================================================
+                 * CONVERSION DE TELEMETRIA
+                 * =========================================================================
+                 *
+                 * parseFloat() transforma los valores recibidos en numeros para
+                 * poder compararlos con los umbrales.
+                 */
+                const t =
+                    parseFloat(nodo.temperatura);
+
+                const h =
+                    parseFloat(nodo.humedad);
+
+                const s =
+                    parseFloat(nodo.sonido);
+
+                const p =
+                    parseFloat(nodo.presion);
+
+
+                /*
+                 * UMBRALES EFECTIVOS DEL NODO
+                 * -----------------------------------------------------------------
+                 *
+                 * Los valores especificos tienen prioridad. Si no existe un umbral
+                 * valido se utiliza el limite global correspondiente.
+                 */
+                const limitesNodo = {
+                    temp:
+                        parseFloat(
+                            nodo.umbral_temp_max
+                        ) || LIMITES.temp,
+
+                    hum:
+                        parseFloat(
+                            nodo.umbral_humedad_max
+                        ) || LIMITES.hum,
+
+                    min_hum:
+                        parseFloat(
+                            nodo.umbral_humedad_min
+                        ) || LIMITES.min_hum,
+
+                    sonido:
+                        parseFloat(
+                            nodo.umbral_sonido_max
+                        ) || LIMITES.sonido
+                };
+
+
+                /*
+                 * =========================================================================
+                 * DETECCION DE ALERTAS
+                 * =========================================================================
+                 */
+
+                /*
+                 * isAlert representa el estado global del nodo.
+                 */
+                let isAlert =
+                    false;
+
+                /*
+                 * El array almacena todas las causas activas para mostrarlas en el
+                 * tooltip.
+                 */
+                let alertMessages =
+                    [];
+
+
+                /*
+                 * TEMPERATURA
+                 * -----------------------------------------------------------------
+                 */
+                if (
+                    t > limitesNodo.temp
+                ) {
+                    isAlert = true;
+
+                    alertMessages.push(
+                        'Temp. alta'
+                    );
+                }
+
+
+                /*
+                 * HUMEDAD
+                 * -----------------------------------------------------------------
+                 *
+                 * Se considera critica tanto por exceso como por defecto.
+                 */
+                if (
+                    h > limitesNodo.hum
+                    || h < limitesNodo.min_hum
+                ) {
+                    isAlert = true;
+
+                    alertMessages.push(
+                        'Humedad critica'
+                    );
+                }
+
+
+                /*
+                 * SONIDO
+                 * -----------------------------------------------------------------
+                 */
+                if (
+                    s > limitesNodo.sonido
+                ) {
+                    isAlert = true;
+
+                    alertMessages.push(
+                        'Ruido alto'
+                    );
+                }
+
+
+                /*
+                 * =========================================================================
+                 * ACTUALIZACION DEL ESTADO VISUAL
+                 * =========================================================================
+                 *
+                 * Un nodo en alerta se muestra en rojo y uno nominal en verde.
+                 */
+                mapPoint.className =
+                    isAlert
+                        ? 'sensor-point status-alert'
+                        : 'sensor-point status-ok';
+
+
+                /*
+                 * El punto contiene un unico DIV interno utilizado como tooltip.
+                 */
+                const tooltipDiv =
+                    mapPoint.querySelector('div');
+
+                /*
+                 * Se construye la lista de clases del tooltip.
+                 */
+                let tooltipClasses =
+                    'sensor-tooltip ';
+
+                tooltipClasses +=
+                    isAlert
+                        ? 'tooltip-alert '
+                        : 'tooltip-ok ';
+
+                /*
+                 * La posicion izquierda o derecha depende de la ubicacion del nodo.
+                 */
+                tooltipClasses +=
+                    posConfig.pos;
+
+                tooltipDiv.className =
+                    tooltipClasses;
+
+
+                /*
+                 * =========================================================================
+                 * MENSAJES DEL TOOLTIP
+                 * =========================================================================
+                 */
+
+                let msgHtml =
+                    '';
+
+                if (isAlert) {
+                    /*
+                     * map() transforma cada causa en un SPAN y join('') concatena
+                     * todo el resultado sin separadores adicionales.
+                     */
+                    msgHtml =
+                        alertMessages
+                            .map(
+                                msg =>
+                                    `<span class="alert-msg">${msg}</span>`
+                            )
+                            .join('');
+
+                } else {
+                    msgHtml =
+                        '<span class="ok-msg">SISTEMA NOMINAL</span>';
+                }
+
+
+                /*
+                 * =========================================================================
+                 * CONTENIDO DE TELEMETRIA
+                 * =========================================================================
+                 *
+                 * Los operadores ternarios permiten cambiar el color cuando una
+                 * magnitud supera su limite.
+                 *
+                 * isNaN() evita intentar formatear valores que no sean numericos.
+                 */
+                tooltipDiv.innerHTML = `
+                    <strong>
+                        ${id}
+                    </strong>
+
+                    <div class="data-grid">
+                        <div>
+                            T:
+                            <span style="color:${t > limitesNodo.temp ? 'var(--accent-red)' : 'white'}">
+                                ${!isNaN(t) ? t.toFixed(1) : '--'} C
+                            </span>
+                        </div>
+
+                        <div>
+                            H:
+                            <span style="color:${(h > limitesNodo.hum || h < limitesNodo.min_hum) ? 'var(--accent-red)' : 'white'}">
+                                ${!isNaN(h) ? h.toFixed(1) : '--'}%
+                            </span>
+                        </div>
+
+                        <div>
+                            S:
+                            <span style="color:${s > limitesNodo.sonido ? 'var(--accent-red)' : 'white'}">
+                                ${!isNaN(s) ? s.toFixed(1) : '--'} dB
+                            </span>
+                        </div>
+
+                        <div>
+                            P:
+                            <span style="color:var(--text-dim)">
+                                ${!isNaN(p) ? p.toFixed(0) : '--'}hPa
+                            </span>
+                        </div>
+                    </div>
+
+                    ${msgHtml}
+                `;
+            });
+
+        } catch (error) {
+            /*
+             * Un fallo de conexion no elimina el plano base. El error se registra en
+             * consola para facilitar su diagnostico.
+             */
+            console.error(
+                "Error conectando con la base de datos",
+                error
+            );
+        }
+    }
+
+
+    /*
+     * ============================================================================
+     * ACTUALIZACION PERIODICA DEL MAPA
+     * ============================================================================
+     *
+     * La informacion se vuelve a consultar cada 5.000 milisegundos, es decir,
+     * aproximadamente cada cinco segundos.
+     */
+    setInterval(
+        fetchMapData,
+        5000
+    );
+
+
+    /*
+     * PRIMERA CARGA INMEDIATA
+     * -------------------------------------------------------------------------
+     *
+     * La primera consulta se ejecuta al entrar en la pagina sin esperar al primer
+     * intervalo.
+     */
+    fetchMapData();
+</script>
+<!--
+    Script compartido encargado de gestionar el tema visual y conservar la
+    preferencia seleccionada en el resto de la aplicacion.
+-->
+<script src="theme.js"></script>
+
+</body>
+</html>

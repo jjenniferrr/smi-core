@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <!--
+        ============================================================================
+        ARCHIVO: dashboard_vivo.html
+        DESCRIPCION GENERAL
+        ============================================================================
+
+        Este archivo implementa una vista auxiliar o prototipo del dashboard de
+        S.M.I. CORE.
+
+        Se trata de una version simplificada de la interfaz principal que puede
+        utilizarse como referencia visual, base historica de desarrollo o soporte
+        para pruebas de navegacion interna entre distintas secciones del sistema.
+
+        Aunque la vista principal y mas completa del proyecto se encuentra en
+        index.html, este archivo sigue formando parte de la estructura del proyecto
+        y, por tanto, se documenta para mantener coherencia tecnica y trazabilidad
+        dentro de la memoria del Trabajo Fin de Grado.
+
+        La pagina presenta tres responsabilidades principales:
+
+        1. Mostrar una navegacion lateral simplificada hacia los principales
+           modulos del sistema.
+
+        2. Incorporar una segunda navegacion contextual mediante pestanas que
+           relaciona la telemetria en vivo, la configuracion de umbrales y el
+           historial de cambios de configuracion.
+
+        3. Servir como ejemplo de estructura visual para representar tarjetas de
+           informacion o KPIs asociados a la telemetria del sistema.
+
+        En su estado actual, los valores mostrados en las tarjetas son estaticos y
+        no se realiza ninguna consulta a la API desde este archivo.
+
+        Tampoco existe logica JavaScript propia asociada a la telemetria. El unico
+        script externo cargado es theme.js, encargado de mantener el tema visual
+        seleccionado por el usuario.
+
+        FLUJO GENERAL DE FUNCIONAMIENTO
+        --------------------------------
+        1. El navegador carga las tipografias y estilos externos.
+        2. Se aplica inmediatamente el tema almacenado en localStorage.
+        3. Se representa la navegacion lateral.
+        4. Se representan las pestanas contextuales del dashboard.
+        5. Se muestra una estructura de ejemplo basada en tarjetas.
+        6. theme.js mantiene sincronizada la apariencia visual con el resto de la
+           aplicacion.
+
+        Este archivo no contiene operaciones de lectura o escritura contra el
+        backend, por lo que su responsabilidad es exclusivamente estructural y
+        visual.
+        ============================================================================
+    -->
+
+    <!--
+        Se carga la tipografia Inter, utilizada como fuente principal de la
+        interfaz.
+    -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+
+    <!--
+        Bootstrap aporta utilidades de maquetacion y el sistema de rejilla empleado
+        en la zona de contenido.
+    -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!--
+        Se aplica el tema guardado antes de que termine de renderizarse la pagina.
+        localStorage.getItem('smi-theme') recupera la preferencia del usuario y el
+        operador || utiliza "dark" cuando todavia no existe una configuracion.
+    -->
+    <script>
+        document.documentElement.setAttribute(
+            'data-theme',
+            localStorage.getItem('smi-theme') || 'dark'
+        );
+    </script>
+
+    <!--
+        Hoja de estilos compartida con el resto de pantallas de S.M.I. CORE.
+    -->
+    <link href="theme.css" rel="stylesheet">
+
+    <style>
+        /*
+         * =========================================================================
+         * VARIABLES GLOBALES DE ESTILO
+         * =========================================================================
+         *
+         * Las variables CSS permiten reutilizar los mismos colores en distintos
+         * componentes sin repetir valores hexadecimales.
+         */
+        :root {
+            /* Color de fondo general de la aplicacion. */
+            --bg-main: #0d1117;
+
+            /* Color utilizado por paneles, tarjetas y menu lateral. */
+            --panel-bg: #161b22;
+
+            /* Color principal de acento utilizado en elementos activos. */
+            --accent-blue: #58a6ff;
+
+            /* Color utilizado para bordes y separadores. */
+            --border: #30363d;
+
+            /* Color secundario empleado para textos menos relevantes. */
+            --text-dim: #7d8590;
+        }
+
+
+        /*
+         * =========================================================================
+         * CONFIGURACION GENERAL DE LA PAGINA
+         * =========================================================================
+         *
+         * Flexbox permite situar el menu lateral y el contenido principal uno al
+         * lado del otro en pantallas de escritorio.
+         */
+        body {
+            background: var(--bg-main);
+            color: #fff;
+            font-family: 'Inter', sans-serif;
+            padding: 0;
+            margin: 0;
+            display: flex;
+        }
+
+
+        /*
+         * box-sizing: border-box hace que padding y border formen parte del ancho y
+         * alto total calculado de los elementos.
+         */
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+        }
+
+
+        /*
+         * Se sobrescribe el color de la clase text-muted de Bootstrap para adaptarla
+         * al tema del proyecto.
+         */
+        .text-muted {
+            color: #9aa4b2 !important;
+        }
+
+
+        /*
+         * =========================================================================
+         * MENU LATERAL FIJO
+         * =========================================================================
+         *
+         * En escritorio se mantiene anclado al lateral izquierdo y ocupa toda la
+         * altura de la ventana.
+         */
+        .sidebar {
+            width: 240px;
+            height: 100vh;
+            background: var(--panel-bg);
+            border-right: 1px solid var(--border);
+            position: fixed;
+            padding: 30px 20px;
+        }
+
+
+        /*
+         * =========================================================================
+         * CONTENIDO PRINCIPAL
+         * =========================================================================
+         *
+         * El margen izquierdo coincide con la anchura del sidebar para evitar que
+         * ambos bloques se superpongan.
+         */
+        .main-content {
+            margin-left: 240px;
+            padding: 40px;
+            width: 100%;
+        }
+
+
+        /*
+         * =========================================================================
+         * NAVEGACION INTERNA MEDIANTE PESTANAS
+         * =========================================================================
+         *
+         * Esta segunda navegacion ofrece accesos relacionados con el contexto del
+         * dashboard sin sustituir al menu principal.
+         */
+        .nav-tabs-custom {
+            display: flex;
+            gap: 20px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 30px;
+        }
+
+
+        /*
+         * Cada tab se representa como un enlace con una linea inferior reservada
+         * para indicar el elemento activo.
+         */
+        .tab-item {
+            padding: 10px 0;
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 600;
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+        }
+
+
+        /*
+         * La pestana activa utiliza el color principal de acento.
+         */
+        .tab-item.active {
+            color: var(--accent-blue);
+            border-bottom: 2px solid var(--accent-blue);
+        }
+
+
+        /*
+         * Al situar el cursor sobre una pestana se aumenta su contraste.
+         */
+        .tab-item:hover {
+            color: #fff;
+        }
+
+
+        /*
+         * =========================================================================
+         * DISENO RESPONSIVE PARA TABLETS
+         * =========================================================================
+         *
+         * Cuando el ancho disponible es inferior a 900 px, el menu deja de ser
+         * lateral y pasa a ocupar la parte superior de la pagina.
+         */
+        @media (max-width: 900px) {
+
+            /*
+             * Se elimina la distribucion horizontal principal.
+             */
+            body {
+                display: block;
+            }
+
+            /*
+             * El sidebar pasa a formar parte del flujo normal del documento.
+             */
+            .sidebar {
+                position: static;
+                width: 100%;
+                height: auto;
+                padding: 18px;
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+            }
+
+            /*
+             * Al dejar de existir un menu fijo lateral, el contenido ya no necesita
+             * margen izquierdo.
+             */
+            .main-content {
+                margin-left: 0;
+                padding: 24px;
+            }
+
+            /*
+             * Las pestanas pueden dividirse en varias lineas si no existe espacio
+             * suficiente.
+             */
+            .nav-tabs-custom {
+                overflow-x: hidden;
+                flex-wrap: wrap;
+                gap: 10px;
+            }
+        }
+
+
+        /*
+         * =========================================================================
+         * DISENO RESPONSIVE PARA MOVILES
+         * =========================================================================
+         *
+         * Se reducen margenes y tamanos para mejorar el uso en pantallas estrechas.
+         */
+        @media (max-width: 560px) {
+
+            .main-content {
+                padding: 18px 14px;
+            }
+
+            /*
+             * El menu pasa a comportarse como una cabecera sticky, permaneciendo
+             * visible mientras el usuario se desplaza verticalmente.
+             */
+            .sidebar {
+                position: sticky;
+                top: 0;
+                z-index: 1000;
+                padding: 12px;
+            }
+
+            /*
+             * Los enlaces del menu se muestran como elementos inline-flex para
+             * aprovechar mejor el espacio horizontal disponible.
+             */
+            .sidebar .nav-item {
+                display: inline-flex;
+                margin: 0 8px 8px 0;
+                white-space: normal;
+                overflow-wrap: anywhere;
+                text-align: center;
+                min-height: 36px;
+                padding: 8px 12px;
+                font-size: 13px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<!--
+    ============================================================================
+    NAVEGACION PRINCIPAL
+    ============================================================================
+    Esta version auxiliar utiliza una navegacion lateral simplificada respecto a
+    otras vistas mas completas del proyecto.
+-->
+<nav class="sidebar">
+
+    <!-- Identidad visual simplificada del sistema. -->
+    <div class="mb-5">
+        <h5 class="fw-bold">
+            S.M.I.
+            <span style="color:var(--accent-blue)">
+                CORE
+            </span>
+        </h5>
+    </div>
+
+
+    <!--
+        La clase active identifica visualmente la vista correspondiente al dashboard.
+    -->
+    <a
+        href="dashboard_vivo.html"
+        class="nav-item active">
+        Dashboard
+    </a>
+
+    <!-- Acceso al plano espacial de la planta. -->
+    <a
+        href="mapa.html"
+        class="nav-item">
+        Mapa de Planta
+    </a>
+
+    <!-- Acceso a la comparativa analitica por zonas. -->
+    <a
+        href="mantenimiento.html"
+        class="nav-item">
+        Analisis por Zonas
+    </a>
+
+    <!-- Acceso al registro historico de telemetria. -->
+    <a
+        href="historial.html"
+        class="nav-item">
+        Historial de Datos
+    </a>
+
+    <!-- Acceso al centro de generacion de informes. -->
+    <a
+        href="reportes.html"
+        class="nav-item">
+        Reportes
+    </a>
+</nav>
+
+
+<!--
+    ============================================================================
+    CONTENIDO PRINCIPAL
+    ============================================================================
+-->
+<div class="main-content">
+
+    <!--
+        ============================================================================
+        PESTANAS DE NAVEGACION CONTEXTUAL
+        ============================================================================
+        Estas opciones agrupan vistas relacionadas con la monitorizacion y la
+        configuracion del sistema.
+    -->
+    <div class="nav-tabs-custom">
+
+        <!-- Pestana correspondiente a esta vista auxiliar. -->
+        <a
+            href="dashboard_vivo.html"
+            class="tab-item active">
+            Telemetría en Vivo
+        </a>
+
+        <!-- Acceso a la gestion de umbrales por nodo. -->
+        <a
+            href="configurar-sistema.html"
+            class="tab-item">
+            Configuración de Umbrales
+        </a>
+
+        <!-- Acceso al historial de modificaciones de configuracion. -->
+        <a
+            href="historial-configuracion.html"
+            class="tab-item">
+            Registro Config.
+        </a>
+    </div>
+
+
+    <!--
+        ============================================================================
+        CONTENIDO DEL DASHBOARD
+        ============================================================================
+        Bootstrap se utiliza para distribuir las tarjetas en una rejilla responsive.
+
+        En esta version de prototipo los valores son estaticos. No se realiza una
+        consulta al backend ni existe actualizacion automatica de telemetria.
+    -->
+    <div class="row g-4">
+
+        <!--
+            Tarjeta de ejemplo para representar una magnitud de telemetria.
+            col-md-4 hace que, desde el breakpoint "md", ocupe cuatro de las doce
+            columnas de la rejilla de Bootstrap.
+        -->
+        <div class="col-md-4">
+
+            <div
+                class="node-card"
+                style="
+                    background: var(--panel-bg);
+                    border: 1px solid var(--border);
+                    padding: 20px;
+                    border-radius: 8px;
+                ">
+
+                <!-- Etiqueta descriptiva de la magnitud. -->
+                <small style="color:var(--text-dim)">
+                    TEMPERATURA
+                </small>
+
+                <!--
+                    Valor estatico utilizado como ejemplo visual.
+                    En esta vista no procede de ninguna consulta a la API.
+                -->
+                <h2 class="fw-bold">
+                    24.5°C
+                </h2>
+            </div>
+        </div>
+
+        <!--
+            Marcador que indica que la version original contempla la incorporacion
+            de mas tarjetas siguiendo la misma estructura.
+        -->
+        <!-- ... resto de tarjetas ... -->
+    </div>
+</div>
+
+
+<!--
+    ============================================================================
+    GESTION DEL TEMA VISUAL
+    ============================================================================
+    theme.js mantiene sincronizado el tema de esta vista con el resto del sistema.
+
+    Este archivo no contiene funciones JavaScript propias, peticiones fetch ni
+    operaciones contra el backend.
+-->
+<script src="theme.js"></script>
+
+</body>
+</html>
